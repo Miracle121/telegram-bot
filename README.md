@@ -105,13 +105,17 @@ Domenning A-yozuvi server IP'siga qaratilgan bo'lishi kerak.
 
 ```bash
 sudo cp deploy/nginx.conf /etc/nginx/sites-available/telegram-bot
-sudo nano /etc/nginx/sites-available/telegram-bot   # bot.example.com ni almashtiring
-sudo ln -s /etc/nginx/sites-available/telegram-bot /etc/nginx/sites-enabled/
+sudo sed -i 's/bot.example.com/<domeningiz>/' /etc/nginx/sites-available/telegram-bot
+sudo ln -sf /etc/nginx/sites-available/telegram-bot /etc/nginx/sites-enabled/
+sudo rm -f /etc/nginx/sites-enabled/default
 sudo nginx -t && sudo systemctl reload nginx
 
 sudo apt install -y certbot python3-certbot-nginx
-sudo certbot --nginx -d bot.example.com
+sudo certbot --nginx -d <domeningiz>
 ```
+
+Konfig ataylab faqat 80-port bilan keladi — sertifikat yo'q paytda `listen 443 ssl`
+yozilsa nginx ishga tushmaydi. HTTPS blokini va yo'naltirishni certbot o'zi qo'shadi.
 
 ### 5. systemd xizmati
 
