@@ -1,0 +1,66 @@
+name: Deploy
+
+# main ga har push da server yangilanadi.
+# Kerakli GitHub Secrets: VPS_HOST, VPS_USER, VPS_SSH_KEY (ixtiyoriy: VPS_PORT)
+
+on:
+  push:
+    branches: [main]
+  workflow_dispatch:
+
+concurrency:
+  group: deploy-production
+  cancel-in-progress: false
+
+jobs:
+  check:
+    name: Sinovlar
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+
+      - run: npm ci --omit=dev
+
+      - name: Sintaksisni tekshirish
+        run: |
+          for file in bot.js config.js telegram.js i18n.js store.js scripts/*.js; do
+            node --check "$file"
+          done
+
+      - name: Uchdan-uchgacha sinov
+        run: npm test
+
+  deploy:
+    name: Serverga chiqarish
+    needs: check
+    runs-on: ubuntu-latest
+    steps:
+      - name: SSH orqali yangilash
+        uses: appleboy/ssh-action@v1
+        with:
+          host: ${{ secrets.VPS_HOST }}
+          username: ${{ secrets.VPS_USER }}
+          key: ${{ secrets.VPS_SSH_KEY }}
+          port: ${{ secrets.VPS_PORT || 22 }}
+          script_stop: true
+          script: |
+            set -euo pipefail
+            cd /opt/telegram-bot
+
+            git fetch --all
+            git reset --hard origin/main
+
+            npm ci --omit=dev
+
+            sudo systemctl restart telegram-bot
+
+            # Xizmat haqiqatan ko'tarilganini tekshiramiz
+            sleep 3
+            systemctl is-active --quiet telegram-bot
+            curl -fsS http://127.0.0.1:3000/health
+            echo ""
+            echo "Deploy muvaffaqiyatli"

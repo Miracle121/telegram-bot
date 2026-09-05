@@ -1,0 +1,50 @@
+; systemd unit — serverda /etc/systemd/system/telegram-bot.service ga ko'chiriladi.
+;
+;   sudo cp deploy/telegram-bot.service /etc/systemd/system/
+;   sudo systemctl daemon-reload
+;   sudo systemctl enable --now telegram-bot
+;   sudo systemctl status telegram-bot
+;   journalctl -u telegram-bot -f          # jonli log
+
+[Unit]
+Description=Telegram Bot (webhook)
+Documentation=https://core.telegram.org/bots/api
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+User=botuser
+Group=botuser
+WorkingDirectory=/opt/telegram-bot
+
+# .env WorkingDirectory ichidan o'qiladi; bu qator faqat qo'shimcha kafolat.
+# Boshidagi "-" — fayl bo'lmasa ham xizmat ishga tushaveradi.
+EnvironmentFile=-/opt/telegram-bot/.env
+Environment=NODE_ENV=production
+
+# Node yo'li serverda boshqacha bo'lishi mumkin: `which node` bilan tekshiring
+ExecStart=/usr/bin/node bot.js
+
+Restart=always
+RestartSec=5
+# 10 soniya — bot.js dagi graceful shutdown taymeriga mos
+TimeoutStopSec=15
+KillSignal=SIGTERM
+
+StandardOutput=journal
+StandardError=journal
+SyslogIdentifier=telegram-bot
+
+# Xavfsizlik cheklovlari
+NoNewPrivileges=true
+PrivateTmp=true
+ProtectSystem=full
+ProtectHome=true
+ProtectKernelTunables=true
+ProtectControlGroups=true
+RestrictSUIDSGID=true
+ReadWritePaths=/opt/telegram-bot/data
+
+[Install]
+WantedBy=multi-user.target

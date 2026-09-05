@@ -1,0 +1,10 @@
+node_modules/
+.env
+data/*.json
+data/*.tmp
+*.log
+npm-debug.log*
+.DS_Store
+
+# Shaxsiy qaydlar
+promt/

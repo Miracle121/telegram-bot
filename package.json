@@ -1,0 +1,23 @@
+{
+  "name": "telegram-bot",
+  "version": "1.0.0",
+  "private": true,
+  "description": "Telegram bot — webhook orqali ishlaydi, ko'p tilli javob beradi",
+  "type": "module",
+  "main": "bot.js",
+  "engines": {
+    "node": ">=20.12"
+  },
+  "scripts": {
+    "start": "node bot.js",
+    "dev": "node --watch bot.js",
+    "test": "node scripts/smoke-test.js",
+    "webhook:set": "node scripts/webhook.js set",
+    "webhook:info": "node scripts/webhook.js info",
+    "webhook:delete": "node scripts/webhook.js delete",
+    "secret": "node scripts/secret.js"
+  },
+  "dependencies": {
+    "express": "^5.1.0"
+  }
+}

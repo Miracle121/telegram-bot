@@ -1,0 +1,133 @@
+// Telegram Bot API bilan ishlash qatlami.
+// Node 20+ ichidagi fetch ishlatiladi — qo'shimcha HTTP paket kerak emas.
+
+import { config } from "./config.js";
+
+// Manzilni almashtirish mumkin — lokal test yoki o'z Bot API serveringiz uchun
+const API_HOST = (process.env.TELEGRAM_API_BASE ?? "https://api.telegram.org").replace(/\/+$/, "");
+const API_BASE = `${API_HOST}/bot${config.token}`;
+const REQUEST_TIMEOUT_MS = 10_000;
+const MAX_ATTEMPTS = 3;
+
+export class TelegramError extends Error {
+  constructor(method, status, description, parameters) {
+    super(`${method}: ${description}`);
+    this.name = "TelegramError";
+    this.method = method;
+    this.status = status;
+    this.description = description;
+    this.parameters = parameters ?? {};
+  }
+}
+
+const sleep = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
+
+/**
+ * Bot API metodini chaqiradi.
+ * - har bir so'rov 10 soniyada uziladi (osilib qolmaslik uchun)
+ * - 429 da Telegram bergan retry_after hurmat qilinadi
+ * - 5xx va tarmoq xatolarida eksponensial backoff bilan qayta uriniladi
+ * - 4xx (masalan 403 — foydalanuvchi botni bloklagan) qayta urinilmaydi
+ */
+export async function callApi(method, payload = {}) {
+  let lastError;
+
+  for (let attempt = 1; attempt <= MAX_ATTEMPTS; attempt += 1) {
+    try {
+      const response = await fetch(`${API_BASE}/${method}`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify(payload),
+        signal: AbortSignal.timeout(REQUEST_TIMEOUT_MS),
+      });
+
+      const body = await response.json().catch(() => ({}));
+
+      if (response.ok && body.ok) return body.result;
+
+      const error = new TelegramError(
+        method,
+        response.status,
+        body.description ?? `HTTP ${response.status}`,
+        body.parameters,
+      );
+
+      // 429 — sekinlashtiramiz va yana urinamiz
+      if (response.status === 429 && attempt < MAX_ATTEMPTS) {
+        const waitSeconds = error.parameters.retry_after ?? 1;
+        await sleep(waitSeconds * 1000);
+        lastError = error;
+        continue;
+      }
+
+      // 5xx — Telegram tomonda vaqtinchalik muammo
+      if (response.status >= 500 && attempt < MAX_ATTEMPTS) {
+        await sleep(backoffMs(attempt));
+        lastError = error;
+        continue;
+      }
+
+      throw error;
+    } catch (error) {
+      if (error instanceof TelegramError) throw error;
+
+      // Tarmoq xatosi yoki timeout
+      lastError = error;
+      if (attempt < MAX_ATTEMPTS) {
+        await sleep(backoffMs(attempt));
+        continue;
+      }
+      throw error;
+    }
+  }
+
+  throw lastError;
+}
+
+function backoffMs(attempt) {
+  const base = 300 * 2 ** (attempt - 1);
+  return base + Math.floor(Math.random() * 200); // jitter
+}
+
+// HTML parse_mode uchun foydalanuvchi matnini xavfsiz qilish
+export function escapeHtml(text) {
+  return String(text)
+    .replaceAll("&", "&amp;")
+    .replaceAll("<", "&lt;")
+    .replaceAll(">", "&gt;");
+}
+
+export const sendMessage = (chatId, text, extra = {}) =>
+  callApi("sendMessage", {
+    chat_id: chatId,
+    text,
+    parse_mode: "HTML",
+    link_preview_options: { is_disabled: true },
+    ...extra,
+  });
+
+export const answerCallbackQuery = (callbackQueryId, extra = {}) =>
+  callApi("answerCallbackQuery", { callback_query_id: callbackQueryId, ...extra });
+
+export const editMessageReplyMarkup = (chatId, messageId, replyMarkup = { inline_keyboard: [] }) =>
+  callApi("editMessageReplyMarkup", {
+    chat_id: chatId,
+    message_id: messageId,
+    reply_markup: replyMarkup,
+  });
+
+export const getMe = () => callApi("getMe");
+
+export const setWebhook = (url, secretToken) =>
+  callApi("setWebhook", {
+    url,
+    secret_token: secretToken,
+    // Faqat kerakli update turlarini olamiz — ortiqcha trafik kesiladi
+    allowed_updates: ["message", "callback_query"],
+    max_connections: 40,
+  });
+
+export const deleteWebhook = (dropPendingUpdates = false) =>
+  callApi("deleteWebhook", { drop_pending_updates: dropPendingUpdates });
+
+export const getWebhookInfo = () => callApi("getWebhookInfo");

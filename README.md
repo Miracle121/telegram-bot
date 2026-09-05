@@ -1,0 +1,179 @@
+# Telegram Bot
+
+Webhook orqali ishlaydigan Telegram bot. Hozircha AI yo'q: foydalanuvchi til tanlaydi
+(o'zbek / rus / ingliz) va bot yozilgan matnni o'sha tilda qaytaradi.
+
+## Fayl tuzilishi
+
+```
+bot.js                 kirish nuqtasi — server, webhook, xabarlarni qayta ishlash
+config.js              .env o'qish va tekshirish (xato bo'lsa ishga tushmaydi)
+telegram.js            Bot API klienti — timeout, qayta urinish, 429 ni hurmat qilish
+i18n.js                uz / ru / en matnlari va til tanlash klaviaturasi
+store.js               foydalanuvchi tili (data/users.json)
+scripts/webhook.js     webhookni o'rnatish / ko'rish / o'chirish
+scripts/secret.js      WEBHOOK_SECRET generatori
+scripts/smoke-test.js  uchdan-uchgacha sinov (soxta Telegram API bilan)
+deploy/                systemd unit va nginx konfigi
+.github/workflows/     GitHub Actions — main ga push da avtomatik deploy
+```
+
+## Buyruqlar
+
+| Buyruq | Vazifasi |
+|---|---|
+| `npm start` | Botni ishga tushirish |
+| `npm run dev` | Fayl o'zgarganda avtomatik qayta ishga tushish |
+| `npm test` | Uchdan-uchgacha sinov (token va internet kerak emas) |
+| `npm run webhook:set` | Webhookni Telegram'da ro'yxatdan o'tkazish |
+| `npm run webhook:info` | Webhook holati va oxirgi xato |
+| `npm run webhook:delete` | Webhookni o'chirish |
+| `npm run secret` | Yangi `WEBHOOK_SECRET` generatsiya qilish |
+
+## Lokal ishga tushirish
+
+```bash
+npm install
+```
+
+`.env` faylini to'ldiring — `TELEGRAM_BOT_TOKEN` ni [@BotFather](https://t.me/BotFather)
+dan oling (`/newbot`). `WEBHOOK_SECRET` allaqachon generatsiya qilingan.
+
+`PUBLIC_URL` bo'sh bo'lsa bot ishga tushadi, lekin webhook o'rnatilmaydi — bu normal:
+webhook uchun public HTTPS domen kerak, ya'ni serverga chiqarilgandan keyin ishlaydi.
+
+```bash
+npm start
+```
+
+Server ko'tarilganini tekshirish: <http://localhost:3000/health>
+
+### Sinov
+
+```bash
+npm test
+```
+
+Sinov soxta Telegram API ko'taradi va botga haqiqiy webhook so'rovlarini yuboradi:
+maxfiy kalit tekshiruvi, til tanlash, aks-sado, HTML ekranlash, takroriy update'ni
+tashlab yuborish va tilning diskka yozilishi tekshiriladi. Haqiqiy token kerak emas.
+
+## Serverga chiqarish (VPS + nginx + systemd)
+
+### 1. Serverni tayyorlash
+
+```bash
+# Node.js 22 (Ubuntu/Debian)
+curl -fsSL https://deb.nodesource.com/setup_22.x | sudo -E bash -
+sudo apt install -y nodejs nginx git
+
+# Bot uchun alohida foydalanuvchi — root ostida ishlatmaymiz
+sudo useradd --system --create-home --shell /bin/bash botuser
+sudo mkdir -p /opt/telegram-bot
+sudo chown botuser:botuser /opt/telegram-bot
+```
+
+### 2. Kodni joylashtirish
+
+```bash
+sudo -u botuser git clone https://github.com/<user>/<repo>.git /opt/telegram-bot
+cd /opt/telegram-bot
+sudo -u botuser npm ci --omit=dev
+```
+
+### 3. `.env` yaratish
+
+```bash
+sudo -u botuser cp .env.example .env
+sudo -u botuser nano .env
+sudo chmod 600 .env      # tokenni faqat botuser o'qiy olsin
+```
+
+Server uchun qiymatlar:
+
+```
+TELEGRAM_BOT_TOKEN=<BotFather token>
+WEBHOOK_SECRET=<lokal .env dagi bilan bir xil bo'lishi shart emas, lekin bitta bo'lsin>
+PUBLIC_URL=https://bot.example.com
+PORT=3000
+NODE_ENV=production
+```
+
+### 4. nginx va HTTPS
+
+Domenning A-yozuvi server IP'siga qaratilgan bo'lishi kerak.
+
+```bash
+sudo cp deploy/nginx.conf /etc/nginx/sites-available/telegram-bot
+sudo nano /etc/nginx/sites-available/telegram-bot   # bot.example.com ni almashtiring
+sudo ln -s /etc/nginx/sites-available/telegram-bot /etc/nginx/sites-enabled/
+sudo nginx -t && sudo systemctl reload nginx
+
+sudo apt install -y certbot python3-certbot-nginx
+sudo certbot --nginx -d bot.example.com
+```
+
+### 5. systemd xizmati
+
+```bash
+sudo cp deploy/telegram-bot.service /etc/systemd/system/
+which node    # yo'l /usr/bin/node dan farq qilsa, unit faylida to'g'rilang
+sudo systemctl daemon-reload
+sudo systemctl enable --now telegram-bot
+sudo systemctl status telegram-bot
+```
+
+Loglar: `journalctl -u telegram-bot -f`
+
+### 6. Webhookni tekshirish
+
+Bot ishga tushganda `PUBLIC_URL` bo'lsa webhookni o'zi o'rnatadi. Tekshirish:
+
+```bash
+sudo -u botuser npm run webhook:info --prefix /opt/telegram-bot
+```
+
+`Kutayotgan update: 0` va xatolar yo'q bo'lsa — botga Telegram'da yozib ko'ring.
+
+### 7. Avtomatik deploy (GitHub Actions)
+
+`main` ga push bo'lganda `.github/workflows/deploy.yml` serverga kiradi, kodni yangilaydi
+va xizmatni qayta ishga tushiradi. Repo sozlamalarida
+**Settings → Secrets and variables → Actions** bo'limiga qo'shing:
+
+| Secret | Qiymat |
+|---|---|
+| `VPS_HOST` | server IP yoki domeni |
+| `VPS_USER` | SSH foydalanuvchisi (masalan `deploy` yoki `botuser`) |
+| `VPS_SSH_KEY` | maxfiy SSH kalit (to'liq matn, `-----BEGIN ...` bilan birga) |
+| `VPS_PORT` | SSH porti, 22 dan farq qilsa |
+
+SSH kalit juftligini yaratish:
+
+```bash
+ssh-keygen -t ed25519 -C "github-actions" -f ~/.ssh/gh_deploy -N ""
+ssh-copy-id -i ~/.ssh/gh_deploy.pub <user>@<server>
+cat ~/.ssh/gh_deploy        # shu matnni VPS_SSH_KEY ga qo'ying
+```
+
+Deploy foydalanuvchisi parolsiz `restart` qila olishi uchun:
+
+```bash
+echo '<user> ALL=(ALL) NOPASSWD: /bin/systemctl restart telegram-bot, /bin/systemctl is-active telegram-bot' \
+  | sudo tee /etc/sudoers.d/telegram-bot
+```
+
+## Nosozliklarni bartaraf qilish
+
+| Belgi | Sabab va yechim |
+|---|---|
+| `Konfiguratsiya xatosi` | `.env` da token yoki secret yo'q / noto'g'ri formatda |
+| `Telegram API bilan bog'lanib bo'lmadi` | Token noto'g'ri yoki serverda internet yo'q |
+| Bot javob bermaydi | `npm run webhook:info` — `last_error_message` ni o'qing |
+| `webhook_info` da `SSL error` | Sertifikat to'liq emas: `sudo certbot --nginx` ni qayta ishga tushiring |
+| 401 loglarda | Begona so'rov — normal, e'tibor bermang |
+
+## Keyingi qadam
+
+AI javoblari `bot.js` dagi `handleMessage()` ichidagi `case null:` bo'limiga ulanadi —
+qolgan qatlamlarga (xavfsizlik, qayta urinish, takror update'lar) tegilmaydi.

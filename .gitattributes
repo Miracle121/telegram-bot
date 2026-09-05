@@ -1,0 +1,4 @@
+# Serverda (Linux) fayllar LF bilan bo'lishi kerak — CRLF systemd va nginx konfiglarini buzadi
+* text=auto eol=lf
+*.png binary
+*.jpg binary
