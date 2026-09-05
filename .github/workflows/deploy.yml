@@ -1,6 +1,6 @@
 name: Deploy
 
-# main ga har push da server yangilanadi.
+# main ga har push da sinovlar ishlaydi; VPS secret'lari qo'shilgan bo'lsa server yangilanadi.
 # Kerakli GitHub Secrets: VPS_HOST, VPS_USER, VPS_SSH_KEY (ixtiyoriy: VPS_PORT)
 
 on:
@@ -17,9 +17,9 @@ jobs:
     name: Sinovlar
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v5
 
-      - uses: actions/setup-node@v4
+      - uses: actions/setup-node@v5
         with:
           node-version: '22'
 
@@ -39,14 +39,28 @@ jobs:
     needs: check
     runs-on: ubuntu-latest
     steps:
+      # Secret'lar hali qo'shilmagan bo'lsa deploy o'tkazib yuboriladi —
+      # workflow behuda qizarmaydi.
+      - name: Sozlamalar borligini tekshirish
+        id: guard
+        env:
+          VPS_HOST: ${{ secrets.VPS_HOST }}
+        run: |
+          if [ -n "$VPS_HOST" ]; then
+            echo "ready=true" >> "$GITHUB_OUTPUT"
+          else
+            echo "ready=false" >> "$GITHUB_OUTPUT"
+            echo "VPS_HOST secret topilmadi — deploy o'tkazib yuborildi." >> "$GITHUB_STEP_SUMMARY"
+          fi
+
       - name: SSH orqali yangilash
+        if: steps.guard.outputs.ready == 'true'
         uses: appleboy/ssh-action@v1
         with:
           host: ${{ secrets.VPS_HOST }}
           username: ${{ secrets.VPS_USER }}
           key: ${{ secrets.VPS_SSH_KEY }}
           port: ${{ secrets.VPS_PORT || 22 }}
-          script_stop: true
           script: |
             set -euo pipefail
             cd /opt/telegram-bot
