@@ -8,3 +8,6 @@ npm-debug.log*
 
 # Shaxsiy qaydlar
 promt/
+
+# Ichki qaydlar — server tafsilotlari bor, public repoga chiqmasin
+CLAUDE.md
