@@ -10,6 +10,12 @@ import * as tg from "../telegram.js";
 
 const command = process.argv[2];
 
+/** Webhook yo'lidagi maxfiy kalitni yashiradi — log va ekranga tushmasin. */
+function maskSecret(url) {
+  if (!url) return "(o'rnatilmagan)";
+  return url.replace(/\/webhook\/[^/?#]+/, "/webhook/***");
+}
+
 const commands = {
   async set() {
     if (!config.webhookUrl) {
@@ -25,7 +31,7 @@ const commands = {
     const me = await tg.getMe();
 
     console.log(`Bot:                   @${me.username}`);
-    console.log(`URL:                   ${info.url || "(o'rnatilmagan)"}`);
+    console.log(`URL:                   ${maskSecret(info.url)}`);
     console.log(`Maxfiy token:          ${info.has_custom_certificate ? "sertifikat" : "header orqali"}`);
     console.log(`Kutayotgan update:     ${info.pending_update_count}`);
     console.log(`Ruxsat etilgan turlar: ${(info.allowed_updates ?? []).join(", ") || "(barchasi)"}`);
