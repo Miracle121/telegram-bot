@@ -11,6 +11,7 @@ import os from "node:os";
 import path from "node:path";
 
 const API_PORT = 8791;
+const AI_PORT = 8792;
 const BOT_PORT = 3991;
 const SECRET = "test_secret_0123456789abcdef";
 const DATA_DIR = fs.mkdtempSync(path.join(os.tmpdir(), "bot-smoke-"));
@@ -30,6 +31,7 @@ const api = http.createServer((req, res) => {
       sendMessage: { message_id: sent.length },
       answerCallbackQuery: true,
       editMessageReplyMarkup: true,
+      sendChatAction: true,
       setWebhook: true,
     };
 
@@ -39,6 +41,40 @@ const api = http.createServer((req, res) => {
 });
 
 await new Promise((r) => api.listen(API_PORT, r));
+
+// Soxta Claude API. `aiResponse` ni o'zgartirib turli holatlarni sinaymiz.
+const aiRequests = [];
+let aiResponse = { status: 200, text: "Bugungi reja tayyor." };
+
+const aiApi = http.createServer((req, res) => {
+  let body = "";
+  req.on("data", (c) => (body += c));
+  req.on("end", () => {
+    aiRequests.push(body ? JSON.parse(body) : {});
+
+    if (aiResponse.status !== 200) {
+      res.writeHead(aiResponse.status, { "Content-Type": "application/json" });
+      res.end(JSON.stringify({ type: "error", error: { type: "authentication_error", message: "soxta xato" } }));
+      return;
+    }
+
+    res.writeHead(200, { "Content-Type": "application/json" });
+    res.end(
+      JSON.stringify({
+        id: "msg_smoke",
+        type: "message",
+        role: "assistant",
+        model: "claude-opus-5",
+        content: [{ type: "text", text: aiResponse.text }],
+        stop_reason: "end_turn",
+        stop_sequence: null,
+        usage: { input_tokens: 10, output_tokens: 5 },
+      }),
+    );
+  });
+});
+
+await new Promise((r) => aiApi.listen(AI_PORT, r));
 
 const PROJECT_ROOT = path.join(import.meta.dirname, "..");
 
@@ -52,6 +88,9 @@ const bot = spawn(process.execPath, ["bot.js"], {
     PORT: String(BOT_PORT),
     TELEGRAM_API_BASE: `http://127.0.0.1:${API_PORT}`,
     DATA_DIR,
+    ANTHROPIC_API_KEY: "sk-ant-smoke-test-0123456789",
+    ANTHROPIC_BASE_URL: `http://127.0.0.1:${AI_PORT}`,
+    AI_EFFORT: "low",
   },
   stdio: ["ignore", "pipe", "pipe"],
 });
@@ -96,6 +135,14 @@ const message = (id, text) => ({
   },
 });
 
+/** AI so'raladigan xabar yuboradi va javob kelguncha kutadi. */
+async function postAi(update) {
+  sent.length = 0;
+  aiRequests.length = 0;
+  await post(update);
+  await waitFor(() => sent.some((c) => c.method === "sendMessage"));
+}
+
 const lastText = () => [...sent].reverse().find((c) => c.method === "sendMessage")?.payload.text ?? "";
 
 console.log("\nSinov natijalari:\n");
@@ -130,15 +177,37 @@ check("callback javob oldi", sent.some((c) => c.method === "answerCallbackQuery"
 check("tugmalar olib tashlandi", sent.some((c) => c.method === "editMessageReplyMarkup"));
 check("salomlashuv inglizcha", lastText().includes("Hello") && lastText().includes("Ali"));
 
-// 5. Aks-sado tanlangan tilda
-sent.length = 0;
-await post(message(4, "salom dunyo"));
-check("echo inglizcha", lastText().includes("You wrote") && lastText().includes("salom dunyo"));
+// 5. AI javob beradi
+await postAi(message(4, "ertangi kunimni rejalashtir"));
+check("ai javobi yuborildi", lastText().includes("Bugungi reja tayyor"));
+check("\"yozmoqda\" belgisi ko'rsatildi", sent.some((c) => c.method === "sendChatAction"));
+check("so'rov tanlangan tilda so'raldi", (aiRequests[0]?.system ?? "").includes("English"));
+check("savol modelga yetib bordi", aiRequests[0]?.messages?.at(-1)?.content === "ertangi kunimni rejalashtir");
 
-// 6. HTML xavfsizligi
+// 6. Suhbat tarixi eslab qolinadi
+await postAi(message(5, "endi qisqartir"));
+check("tarix modelga uzatildi", aiRequests[0]?.messages?.length === 3, `(${aiRequests[0]?.messages?.length} ta xabar)`);
+
+// 6a. /new tarixni tozalaydi
 sent.length = 0;
-await post(message(5, "<b>qalin</b> & <script>"));
-check("HTML ekranlandi", lastText().includes("&lt;b&gt;") && lastText().includes("&amp;"));
+await post(message(51, "/new"));
+check("/new tarixni tozaladi", lastText().includes("Conversation cleared"));
+
+await postAi(message(52, "yana savol"));
+check("tozalashdan keyin tarix bo'sh", aiRequests[0]?.messages?.length === 1, `(${aiRequests[0]?.messages?.length} ta xabar)`);
+
+// 6b. Uzun javob bo'laklarga bo'linadi (Telegram chegarasi — 4096 belgi)
+aiResponse = { status: 200, text: "salom.\n\n".repeat(700) };
+await postAi(message(53, "uzun javob ber"));
+const chunks = sent.filter((c) => c.method === "sendMessage");
+check("uzun javob bo'lindi", chunks.length > 1, `(${chunks.length} ta xabar)`);
+check("har bir bo'lak chegaradan oshmadi", chunks.every((c) => c.payload.text.length <= 4096));
+
+// 6c. AI xatosi tushunarli javobga aylanadi
+aiResponse = { status: 401, text: "" };
+await postAi(message(54, "xato chiqsin"));
+check("ai xatosi tushuntirildi", lastText().includes("AI key isn't working"));
+aiResponse = { status: 200, text: "Bugungi reja tayyor." };
 
 // 7. /help tanlangan tilda
 sent.length = 0;
@@ -165,7 +234,7 @@ check("stikerga to'g'ri javob", lastText().includes("only understand text"));
 
 // 10. Takrorlangan update tashlab yuboriladi
 sent.length = 0;
-await post(message(4, "salom dunyo")); // update_id 4 allaqachon ishlangan
+await post(message(4, "ertangi kunimni rejalashtir")); // update_id 4 allaqachon ishlangan
 check("takroriy update e'tiborsiz qoldirildi", sent.length === 0, `(${sent.length} ta chaqiruv)`);
 
 // 11. Til diskda saqlandi
@@ -190,6 +259,7 @@ if (process.platform === "win32") {
 }
 
 api.close();
+aiApi.close();
 fs.rmSync(DATA_DIR, { recursive: true, force: true });
 
 console.log(`\n${failures === 0 ? "Barcha sinovlar o'tdi" : `${failures} ta sinov muvaffaqiyatsiz`}\n`);

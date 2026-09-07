@@ -1,19 +1,23 @@
 # Telegram Bot
 
-Webhook orqali ishlaydigan Telegram bot. Hozircha AI yo'q: foydalanuvchi til tanlaydi
-(o'zbek / rus / ingliz) va bot yozilgan matnni o'sha tilda qaytaradi.
+Webhook orqali ishlaydigan Telegram bot — Claude bilan quvvatlangan ish yordamchisi.
+Foydalanuvchi til tanlaydi (o'zbek / rus / ingliz), so'ng oddiy tilda yozadi: kun rejasi,
+mijozlar fikrini tahlil qilish, matnni qisqartirish, xat yozish, qaror qabul qilishda
+yordam. Suhbat eslab qolinadi, `/new` bilan noldan boshlanadi.
 
 ## Fayl tuzilishi
 
 ```
 bot.js                 kirish nuqtasi — server, webhook, xabarlarni qayta ishlash
+ai.js                  Claude qatlami — tizim ko'rsatmasi, so'rov, xatolarni tarjima qilish
 config.js              .env o'qish va tekshirish (xato bo'lsa ishga tushmaydi)
-telegram.js            Bot API klienti — timeout, qayta urinish, 429 ni hurmat qilish
+telegram.js            Bot API klienti — timeout, qayta urinish, 429, uzun matnni bo'lish
 i18n.js                uz / ru / en matnlari va til tanlash klaviaturasi
-store.js               foydalanuvchi tili (data/users.json)
+store.js               foydalanuvchi tili (data/users.json) + suhbat tarixi (xotirada)
 scripts/webhook.js     webhookni o'rnatish / ko'rish / o'chirish
 scripts/secret.js      WEBHOOK_SECRET generatori
-scripts/smoke-test.js  uchdan-uchgacha sinov (soxta Telegram API bilan)
+scripts/ai-test.js     AI kalitini tekshirish — Telegram'siz bitta so'rov
+scripts/smoke-test.js  uchdan-uchgacha sinov (soxta Telegram va Claude API bilan)
 deploy/                systemd unit va nginx konfigi
 .github/workflows/     GitHub Actions — main ga push da avtomatik deploy
 ```
@@ -29,6 +33,7 @@ deploy/                systemd unit va nginx konfigi
 | `npm run webhook:info` | Webhook holati va oxirgi xato |
 | `npm run webhook:delete` | Webhookni o'chirish |
 | `npm run secret` | Yangi `WEBHOOK_SECRET` generatsiya qilish |
+| `npm run ai:test "savol"` | AI kaliti ishlayotganini tekshirish |
 
 ## Lokal ishga tushirish
 
@@ -38,6 +43,8 @@ npm install
 
 `.env` faylini to'ldiring — `TELEGRAM_BOT_TOKEN` ni [@BotFather](https://t.me/BotFather)
 dan oling (`/newbot`). `WEBHOOK_SECRET` allaqachon generatsiya qilingan.
+`ANTHROPIC_API_KEY` ni [console.anthropic.com](https://console.anthropic.com/settings/keys)
+dan oling — busiz bot ishlaydi, lekin AI javob bermaydi.
 
 `PUBLIC_URL` bo'sh bo'lsa bot ishga tushadi, lekin webhook o'rnatilmaydi — bu normal:
 webhook uchun public HTTPS domen kerak, ya'ni serverga chiqarilgandan keyin ishlaydi.
@@ -54,9 +61,16 @@ Server ko'tarilganini tekshirish: <http://localhost:3000/health>
 npm test
 ```
 
-Sinov soxta Telegram API ko'taradi va botga haqiqiy webhook so'rovlarini yuboradi:
-maxfiy kalit tekshiruvi, til tanlash, aks-sado, HTML ekranlash, takroriy update'ni
-tashlab yuborish va tilning diskka yozilishi tekshiriladi. Haqiqiy token kerak emas.
+Sinov soxta Telegram va Claude API'larini ko'taradi va botga haqiqiy webhook so'rovlarini
+yuboradi: maxfiy kalit tekshiruvi, til tanlash, AI javobi, suhbat tarixi, `/new`, uzun
+javobning bo'linishi, AI xatosi, takroriy update va tilning diskka yozilishi tekshiriladi.
+Haqiqiy token ham, AI kaliti ham, internet ham kerak emas.
+
+AI kaliti haqiqatan ishlayotganini tekshirish (internet kerak, pul sarflanadi):
+
+```bash
+npm run ai:test "bir jumlada o'zingni tanishtir"
+```
 
 ## Serverga chiqarish (VPS + nginx + systemd)
 
@@ -97,6 +111,7 @@ WEBHOOK_SECRET=<lokal .env dagi bilan bir xil bo'lishi shart emas, lekin bitta b
 PUBLIC_URL=https://bot.example.com
 PORT=3000
 NODE_ENV=production
+ANTHROPIC_API_KEY=<console.anthropic.com dan olingan kalit>
 ```
 
 ### 4. nginx va HTTPS
@@ -176,8 +191,10 @@ echo '<user> ALL=(ALL) NOPASSWD: /bin/systemctl restart telegram-bot, /bin/syste
 | Bot javob bermaydi | `npm run webhook:info` — `last_error_message` ni o'qing |
 | `webhook_info` da `SSL error` | Sertifikat to'liq emas: `sudo certbot --nginx` ni qayta ishga tushiring |
 | 401 loglarda | Begona so'rov — normal, e'tibor bermang |
+| «AI hali sozlanmagan» javobi | `.env` da `ANTHROPIC_API_KEY` yo'q — qo'shing va xizmatni restart qiling |
+| «AI kaliti ishlamayapti» | Kalit noto'g'ri yoki bekor qilingan: `npm run ai:test` bilan tekshiring |
 
 ## Keyingi qadam
 
-AI javoblari `bot.js` dagi `handleMessage()` ichidagi `case null:` bo'limiga ulanadi —
-qolgan qatlamlarga (xavfsizlik, qayta urinish, takror update'lar) tegilmaydi.
+Taqdimot va hujjat fayllarini tayyorlash (`.pptx`, `.xlsx`, `.docx`) hamda veb qidiruv —
+ikkalasi ham `ai.js` ga `tools` qo'shish bilan ochiladi, qolgan qatlamlarga tegilmaydi.

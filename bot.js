@@ -10,7 +10,9 @@ import express from "express";
 import { config } from "./config.js";
 import * as tg from "./telegram.js";
 import * as store from "./store.js";
+import * as ai from "./ai.js";
 import {
+  aiErrorText,
   chooseLanguagePrompt,
   detectLanguage,
   isSupported,
@@ -58,7 +60,6 @@ function isDuplicate(updateId) {
 
 // ---------------------------------------------------------------
 // Xabarlarni qayta ishlash.
-// AI qo'shilganda faqat shu bo'lim o'zgaradi.
 // ---------------------------------------------------------------
 
 async function handleUpdate(update) {
@@ -90,8 +91,8 @@ async function handleMessage(message) {
 
   switch (command) {
     case null:
-      // Oddiy matn — hozircha aks-sado. Keyinchalik shu yerda AI javobi bo'ladi.
-      await tg.sendMessage(chatId, t(lang, "echo", { text: tg.escapeHtml(text) }));
+      // Oddiy matn — AI javob beradi
+      await handleAiMessage(chatId, user, lang, text);
       return;
 
     case "start":
@@ -102,12 +103,81 @@ async function handleMessage(message) {
       await tg.sendMessage(chatId, t(lang, "help"));
       return;
 
+    case "new":
+    case "reset":
+      store.clearHistory(user.id);
+      await tg.sendMessage(chatId, t(lang, "historyCleared"));
+      return;
+
     case "lang":
       await tg.sendMessage(chatId, t(lang, "chooseLanguage"), { reply_markup: languageKeyboard() });
       return;
 
     default:
       await tg.sendMessage(chatId, t(lang, "unknownCommand"));
+  }
+}
+
+// ---------------------------------------------------------------
+// AI suhbati
+// ---------------------------------------------------------------
+
+// Bir foydalanuvchi javob kutayotganda yana yozsa, ikkinchi so'rov boshlanmaydi:
+// aks holda ikki javob bir-birining tarixini buzadi va hisob ikki barobar bo'lardi.
+const busyUsers = new Set();
+
+const TYPING_REFRESH_MS = 4000; // Telegram "yozmoqda" holatini ~5 soniya ushlab turadi
+
+/** Javob kelguncha "yozmoqda..." belgisini yangilab turadi; to'xtatuvchi funksiya qaytaradi. */
+function keepTyping(chatId) {
+  const tick = () => tg.sendChatAction(chatId, "typing").catch(() => {});
+  tick();
+  const timer = setInterval(tick, TYPING_REFRESH_MS);
+  timer.unref();
+  return () => clearInterval(timer);
+}
+
+async function handleAiMessage(chatId, user, lang, text) {
+  if (!ai.enabled) {
+    await tg.sendMessage(chatId, t(lang, "aiDisabled"));
+    return;
+  }
+
+  if (busyUsers.has(user.id)) {
+    await tg.sendMessage(chatId, t(lang, "aiBusy"));
+    return;
+  }
+
+  busyUsers.add(user.id);
+  const stopTyping = keepTyping(chatId);
+  const startedAt = Date.now();
+
+  try {
+    const history = [...store.getHistory(user.id), { role: "user", content: text }];
+    const answer = await ai.ask({ history, lang, userName: user.first_name ?? "" });
+
+    // Tarixga faqat muvaffaqiyatli almashuv yoziladi. Xato bo'lganda savol yozilmagani
+    // ma'qul: foydalanuvchi uni qayta yuborsa, kontekst chalkashmaydi.
+    store.appendToHistory(user.id, "user", text);
+    store.appendToHistory(user.id, "assistant", answer.text);
+
+    await tg.sendRichText(chatId, answer.text + (answer.truncated ? t(lang, "aiTruncated") : ""));
+
+    log.info("ai javob berdi", {
+      userId: user.id,
+      durationMs: Date.now() - startedAt,
+      historyLength: history.length,
+      inputTokens: answer.usage.input_tokens,
+      outputTokens: answer.usage.output_tokens,
+    });
+  } catch (error) {
+    if (!(error instanceof ai.AiError)) throw error;
+
+    log.error("ai xatosi", { userId: user.id, code: error.code, error: error.message });
+    await tg.sendMessage(chatId, aiErrorText(lang, error.code));
+  } finally {
+    stopTyping();
+    busyUsers.delete(user.id);
   }
 }
 
@@ -228,8 +298,13 @@ async function start() {
       username: `@${me.username}`,
       port: config.port,
       webhookPath: "/webhook/***",
+      ai: ai.enabled ? config.ai.model : "o'chiq",
     });
   });
+
+  if (!ai.enabled) {
+    log.warn("ANTHROPIC_API_KEY yo'q — AI suhbati o'chiq, bot faqat buyruqlarga javob beradi");
+  }
 
   if (config.webhookUrl) {
     try {

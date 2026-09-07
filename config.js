@@ -45,6 +45,37 @@ if (publicUrl && !publicUrl.startsWith("https://")) {
   errors.push("PUBLIC_URL https:// bilan boshlanishi kerak — Telegram faqat HTTPS webhook qabul qiladi.");
 }
 
+// --- AI ---
+// ANTHROPIC_API_KEY ixtiyoriy: bo'lmasa bot baribir ishga tushadi, faqat suhbat qismi
+// o'chiq bo'ladi. Shu tanlov tufayli kalitni serverga qo'shishdan oldin ham deploy
+// qilish xavfsiz — bot til tanlash va buyruqlar bilan ishlayveradi.
+const aiApiKey = (process.env.ANTHROPIC_API_KEY ?? "").trim();
+if (aiApiKey && aiApiKey.length < 20) {
+  errors.push("ANTHROPIC_API_KEY juda qisqa — console.anthropic.com dan olingan to'liq kalitni qo'ying.");
+}
+
+const aiModel = (process.env.AI_MODEL ?? "claude-opus-5").trim();
+
+// Fikrlash chuqurligi. Telegram'da foydalanuvchi kutib turadi, shuning uchun standart
+// qiymat "medium": sifat yetarli, javob esa "high" ga qaraganda sezilarli tez keladi.
+const AI_EFFORTS = ["low", "medium", "high", "xhigh", "max"];
+const aiEffort = (process.env.AI_EFFORT ?? "medium").trim();
+if (!AI_EFFORTS.includes(aiEffort)) {
+  errors.push(`AI_EFFORT quyidagilardan biri bo'lishi kerak: ${AI_EFFORTS.join(", ")}.`);
+}
+
+const aiMaxTokens = Number.parseInt(process.env.AI_MAX_TOKENS ?? "8000", 10);
+if (!Number.isInteger(aiMaxTokens) || aiMaxTokens < 1024 || aiMaxTokens > 64000) {
+  errors.push("AI_MAX_TOKENS 1024 dan 64000 gacha butun son bo'lishi kerak.");
+}
+
+// So'rov shuncha vaqtda javob bermasa uziladi. Telegram foydalanuvchisi 2 daqiqadan
+// ko'p kutmasligi kerak — aks holda u savolni qayta yozadi.
+const aiTimeoutMs = Number.parseInt(process.env.AI_TIMEOUT_MS ?? "120000", 10);
+if (!Number.isInteger(aiTimeoutMs) || aiTimeoutMs < 5000) {
+  errors.push("AI_TIMEOUT_MS kamida 5000 (5 soniya) bo'lishi kerak.");
+}
+
 const port = Number.parseInt(process.env.PORT ?? "3000", 10);
 if (!Number.isInteger(port) || port < 1 || port > 65535) {
   errors.push("PORT 1 dan 65535 gacha butun son bo'lishi kerak.");
@@ -65,4 +96,12 @@ export const config = Object.freeze({
   webhookPath: `/webhook/${webhookSecret}`,
   webhookUrl: publicUrl ? `${publicUrl}/webhook/${webhookSecret}` : "",
   isProduction: process.env.NODE_ENV === "production",
+  ai: Object.freeze({
+    enabled: Boolean(aiApiKey),
+    apiKey: aiApiKey,
+    model: aiModel,
+    effort: aiEffort,
+    maxTokens: aiMaxTokens,
+    timeoutMs: aiTimeoutMs,
+  }),
 });

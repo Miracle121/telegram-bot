@@ -1,6 +1,9 @@
-// Foydalanuvchi sozlamalarini (hozircha faqat til) saqlash.
-// Oddiy JSON fayl — restartdan keyin ham saqlanib qoladi.
-// Keyinchalik baza kerak bo'lsa, faqat shu fayl almashtiriladi: interfeys o'zgarmaydi.
+// Foydalanuvchi holati: til (diskda) va suhbat tarixi (faqat xotirada).
+//
+// Til — oddiy JSON fayl, restartdan keyin ham saqlanib qoladi.
+// Suhbat tarixi ataylab diskka yozilmaydi: unda foydalanuvchining shaxsiy yozishmalari
+// bo'ladi, restartdan keyin esa toza suhbat boshlangani ma'qul. Kerak bo'lsa shu faylda
+// bitta joyni o'zgartirish yetadi — interfeys tashqaridan bir xil ko'rinadi.
 
 import fs from "node:fs";
 import path from "node:path";
@@ -58,6 +61,52 @@ export function getLanguage(userId) {
 export function setLanguage(userId, language) {
   users.set(String(userId), { language, updatedAt: new Date().toISOString() });
   scheduleSave();
+}
+
+// ---------------------------------------------------------------
+// Suhbat tarixi — AI kontekstni eslab qolishi uchun
+//
+// Ikkita chegara bor: uzunlik (uzun tarix qimmat va sekin) va vaqt (ertalabki suhbat
+// kechqurungi savolga aralashmasligi kerak).
+// ---------------------------------------------------------------
+
+const HISTORY_MAX_MESSAGES = 20; // ~10 ta savol-javob
+const HISTORY_TTL_MS = 2 * 60 * 60 * 1000; // 2 soat jimlikdan keyin tarix unutiladi
+
+/** @type {Map<string, { messages: Array<{role: string, content: string}>, updatedAt: number }>} */
+const histories = new Map();
+
+function activeHistory(key) {
+  const entry = histories.get(key);
+  if (!entry) return null;
+  if (Date.now() - entry.updatedAt > HISTORY_TTL_MS) {
+    histories.delete(key);
+    return null;
+  }
+  return entry;
+}
+
+/** Foydalanuvchining hozirgi suhbatini qaytaradi (eskirgan bo'lsa — bo'sh ro'yxat). */
+export function getHistory(userId) {
+  return activeHistory(String(userId))?.messages ?? [];
+}
+
+/** Suhbatga bitta xabar qo'shadi va eng eskilarini chegaradan chiqarib tashlaydi. */
+export function appendToHistory(userId, role, content) {
+  const key = String(userId);
+  const entry = activeHistory(key) ?? { messages: [], updatedAt: Date.now() };
+
+  entry.messages.push({ role, content });
+  if (entry.messages.length > HISTORY_MAX_MESSAGES) {
+    entry.messages.splice(0, entry.messages.length - HISTORY_MAX_MESSAGES);
+  }
+  entry.updatedAt = Date.now();
+  histories.set(key, entry);
+}
+
+/** Suhbatni noldan boshlaydi (/new buyrug'i). */
+export function clearHistory(userId) {
+  histories.delete(String(userId));
 }
 
 /** Jarayon yopilishidan oldin kutilayotgan yozuvni diskka tushiradi. */

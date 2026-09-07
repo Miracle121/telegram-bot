@@ -106,6 +106,52 @@ export const sendMessage = (chatId, text, extra = {}) =>
     ...extra,
   });
 
+export const sendChatAction = (chatId, action = "typing") =>
+  callApi("sendChatAction", { chat_id: chatId, action });
+
+// Telegram bitta xabarga 4096 belgi ruxsat beradi; AI javobi undan uzun bo'lishi mumkin.
+const MAX_MESSAGE_LENGTH = 4096;
+
+/**
+ * AI javobini yuboradi.
+ *
+ * Ikkita ehtiyot chorasi bor:
+ *  - uzun matn bo'laklarga bo'linadi (imkon qadar abzas chegarasidan);
+ *  - model noto'g'ri HTML yozib qo'ysa Telegram 400 qaytaradi — bunday holatda
+ *    o'sha bo'lak formatlashsiz, oddiy matn sifatida qayta yuboriladi.
+ */
+export async function sendRichText(chatId, text) {
+  for (const chunk of splitText(text, MAX_MESSAGE_LENGTH)) {
+    try {
+      await sendMessage(chatId, chunk);
+    } catch (error) {
+      const badHtml = error instanceof TelegramError && error.status === 400;
+      if (!badHtml) throw error;
+      await sendMessage(chatId, chunk, { parse_mode: undefined });
+    }
+  }
+}
+
+/** Matnni chegaradan oshmaydigan bo'laklarga bo'ladi. */
+export function splitText(text, limit = MAX_MESSAGE_LENGTH) {
+  if (text.length <= limit) return [text];
+
+  const chunks = [];
+  let rest = text;
+
+  while (rest.length > limit) {
+    const window = rest.slice(0, limit);
+    // Eng ma'qul joy — abzas oxiri, keyin qator oxiri, bo'lmasa shunchaki kesamiz
+    const cut = Math.max(window.lastIndexOf("\n\n"), window.lastIndexOf("\n"));
+    const at = cut > limit * 0.5 ? cut : limit;
+    chunks.push(rest.slice(0, at).trimEnd());
+    rest = rest.slice(at).trimStart();
+  }
+
+  if (rest) chunks.push(rest);
+  return chunks;
+}
+
 export const answerCallbackQuery = (callbackQueryId, extra = {}) =>
   callApi("answerCallbackQuery", { callback_query_id: callbackQueryId, ...extra });
 

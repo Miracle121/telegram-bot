@@ -15,9 +15,11 @@
     "webhook:set": "node scripts/webhook.js set",
     "webhook:info": "node scripts/webhook.js info",
     "webhook:delete": "node scripts/webhook.js delete",
-    "secret": "node scripts/secret.js"
+    "secret": "node scripts/secret.js",
+    "ai:test": "node scripts/ai-test.js"
   },
   "dependencies": {
+    "@anthropic-ai/sdk": "^0.124.0",
     "express": "^5.1.0"
   }
 }
