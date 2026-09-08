@@ -1,6 +1,12 @@
 // Matnlar va til bilan ishlash.
 // Yangi til qo'shish uchun LOCALES ga yangi kalit qo'shish yetarli.
 
+import { config } from "./config.js";
+
+// /help dagi qidiruv haqidagi qator faqat qidiruv yoqilgan bo'lsa ko'rinadi:
+// AI_WEB_SEARCH=off bo'lganda bot qila olmaydigan ishni va'da qilmasin.
+const searchLine = (text) => (config.ai.webSearch ? text : "");
+
 export const LANGUAGES = {
   uz: { flag: "🇺🇿", label: "O'zbekcha" },
   ru: { flag: "🇷🇺", label: "Русский" },
@@ -35,6 +41,8 @@ const LOCALES = {
       "Shunchaki savolingizni yoki vazifangizni yozing — javob beraman. " +
       "Oldingi xabarlaringizni eslab turaman, shuning uchun «buni qisqartir» deb " +
       "davom ettirsangiz ham tushunaman.\n\n" +
+      searchLine("Kerak bo'lganda internetdan qidirib topaman — narxlar, yangiliklar, " +
+        "raqobatchilar. Manbani havola bilan ko'rsataman.\n\n") +
       "/new — suhbatni noldan boshlash\n" +
       "/lang — tilni o'zgartirish\n" +
       "/start — tanishtiruv xabari\n" +
@@ -69,6 +77,8 @@ const LOCALES = {
       "<b>Помощь</b>\n\n" +
       "Просто напишите вопрос или задачу — я отвечу. " +
       "Я помню предыдущие сообщения, поэтому можно продолжать: «сократи это».\n\n" +
+      searchLine("Когда нужно, ищу в интернете — цены, новости, конкуренты. " +
+        "Источник указываю ссылкой.\n\n") +
       "/new — начать разговор заново\n" +
       "/lang — сменить язык\n" +
       "/start — приветственное сообщение\n" +
@@ -103,6 +113,8 @@ const LOCALES = {
       "<b>Help</b>\n\n" +
       "Just write your question or task and I'll answer. " +
       "I remember earlier messages, so you can follow up with «make it shorter».\n\n" +
+      searchLine("When it helps, I'll search the web — prices, news, competitors. " +
+        "I'll link the source.\n\n") +
       "/new — start a fresh conversation\n" +
       "/lang — change language\n" +
       "/start — the intro message\n" +

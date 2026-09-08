@@ -76,6 +76,20 @@ if (!Number.isInteger(aiTimeoutMs) || aiTimeoutMs < 5000) {
   errors.push("AI_TIMEOUT_MS kamida 5000 (5 soniya) bo'lishi kerak.");
 }
 
+// Veb qidiruv. Yoqilgan bo'lsa model kerak bo'lganda internetdan ma'lumot oladi.
+// Har bir qidiruv alohida pul turadi, shuning uchun o'chirib qo'yish imkoni qoldirilgan.
+const aiWebSearch = (process.env.AI_WEB_SEARCH ?? "on").trim().toLowerCase();
+if (!["on", "off"].includes(aiWebSearch)) {
+  errors.push("AI_WEB_SEARCH faqat \"on\" yoki \"off\" bo'lishi mumkin.");
+}
+
+// Bitta javob ichida nechta qidiruvga ruxsat. Chegara bo'lmasa model bir savolga
+// o'nlab qidiruv qilib, hisobni kutilmaganda oshirib yuborishi mumkin.
+const aiWebSearchMaxUses = Number.parseInt(process.env.AI_WEB_SEARCH_MAX_USES ?? "5", 10);
+if (!Number.isInteger(aiWebSearchMaxUses) || aiWebSearchMaxUses < 1 || aiWebSearchMaxUses > 20) {
+  errors.push("AI_WEB_SEARCH_MAX_USES 1 dan 20 gacha butun son bo'lishi kerak.");
+}
+
 const port = Number.parseInt(process.env.PORT ?? "3000", 10);
 if (!Number.isInteger(port) || port < 1 || port > 65535) {
   errors.push("PORT 1 dan 65535 gacha butun son bo'lishi kerak.");
@@ -103,5 +117,7 @@ export const config = Object.freeze({
     effort: aiEffort,
     maxTokens: aiMaxTokens,
     timeoutMs: aiTimeoutMs,
+    webSearch: aiWebSearch === "on",
+    webSearchMaxUses: aiWebSearchMaxUses,
   }),
 });

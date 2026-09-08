@@ -3,13 +3,14 @@
 Webhook orqali ishlaydigan Telegram bot — Claude bilan quvvatlangan ish yordamchisi.
 Foydalanuvchi til tanlaydi (o'zbek / rus / ingliz), so'ng oddiy tilda yozadi: kun rejasi,
 mijozlar fikrini tahlil qilish, matnni qisqartirish, xat yozish, qaror qabul qilishda
-yordam. Suhbat eslab qolinadi, `/new` bilan noldan boshlanadi.
+yordam. Kerak bo'lganda internetdan qidirib, manbani havola bilan ko'rsatadi.
+Suhbat eslab qolinadi, `/new` bilan noldan boshlanadi.
 
 ## Fayl tuzilishi
 
 ```
 bot.js                 kirish nuqtasi — server, webhook, xabarlarni qayta ishlash
-ai.js                  Claude qatlami — tizim ko'rsatmasi, so'rov, xatolarni tarjima qilish
+ai.js                  Claude qatlami — ko'rsatma, veb qidiruv, so'rov, xatolarni tarjima qilish
 config.js              .env o'qish va tekshirish (xato bo'lsa ishga tushmaydi)
 telegram.js            Bot API klienti — timeout, qayta urinish, 429, uzun matnni bo'lish
 i18n.js                uz / ru / en matnlari va til tanlash klaviaturasi
@@ -194,7 +195,24 @@ echo '<user> ALL=(ALL) NOPASSWD: /bin/systemctl restart telegram-bot, /bin/syste
 | «AI hali sozlanmagan» javobi | `.env` da `ANTHROPIC_API_KEY` yo'q — qo'shing va xizmatni restart qiling |
 | «AI kaliti ishlamayapti» | Kalit noto'g'ri yoki bekor qilingan: `npm run ai:test` bilan tekshiring |
 
+## Veb qidiruv
+
+Model kerak bo'lganda o'zi qidiradi — narx, yangilik, raqobatchi, bozor ma'lumoti.
+Qidiruv Anthropic serverida bajariladi, javob ichida natija bilan qaytadi.
+
+```
+AI_WEB_SEARCH=on           # o'chirish uchun: off
+AI_WEB_SEARCH_MAX_USES=5   # bitta javobda nechta qidiruvga ruxsat
+```
+
+**Xarajat.** Qidiruv asbobining ta'rifi har bir so'rovga ~6800 token qo'shadi — qidiruv
+bo'lmasa ham. Shuning uchun ko'rsatmaning o'zgarmas qismi prompt-keshga olingan: ketma-ket
+kelgan so'rovlar uni 10 barobar arzon o'qiydi (kesh 5 daqiqa yashaydi). Qidiruvli javob
+esa baribir qimmat — natijalar modelga kirish tokeni bo'lib qaytadi.
+
+`npm run ai:test "savol"` javob ostida qidiruv sonini va kesh hisobini ko'rsatadi.
+
 ## Keyingi qadam
 
-Taqdimot va hujjat fayllarini tayyorlash (`.pptx`, `.xlsx`, `.docx`) hamda veb qidiruv —
-ikkalasi ham `ai.js` ga `tools` qo'shish bilan ochiladi, qolgan qatlamlarga tegilmaydi.
+Taqdimot va hujjat fayllarini tayyorlash (`.pptx`, `.xlsx`, `.docx`) — `code_execution`
+va Agent Skills orqali. Bunda `telegram.js` ga `sendDocument` qo'shilishi kerak bo'ladi.

@@ -46,11 +46,33 @@ await new Promise((r) => api.listen(API_PORT, r));
 const aiRequests = [];
 let aiResponse = { status: 200, text: "Bugungi reja tayyor." };
 
+// Navbat: qidiruv va pause_turn kabi murakkab holatlar uchun to'liq javob tanasini
+// oldindan qo'yib ketamiz. Bo'sh bo'lsa oddiy `aiResponse` ishlatiladi.
+let aiQueue = [];
+
+/** Soxta Claude javobi. */
+const aiBody = (content, stopReason = "end_turn") => ({
+  id: "msg_smoke",
+  type: "message",
+  role: "assistant",
+  model: "claude-opus-5",
+  content,
+  stop_reason: stopReason,
+  stop_sequence: null,
+  usage: { input_tokens: 10, output_tokens: 5 },
+});
+
 const aiApi = http.createServer((req, res) => {
   let body = "";
   req.on("data", (c) => (body += c));
   req.on("end", () => {
     aiRequests.push(body ? JSON.parse(body) : {});
+
+    if (aiQueue.length > 0) {
+      res.writeHead(200, { "Content-Type": "application/json" });
+      res.end(JSON.stringify(aiQueue.shift()));
+      return;
+    }
 
     if (aiResponse.status !== 200) {
       res.writeHead(aiResponse.status, { "Content-Type": "application/json" });
@@ -143,6 +165,9 @@ async function postAi(update) {
   await waitFor(() => sent.some((c) => c.method === "sendMessage"));
 }
 
+/** So'rovdagi tizim ko'rsatmasi (endi bloklar massivi) — matn bo'yicha qidirish uchun. */
+const systemText = (req) => JSON.stringify(req?.system ?? "");
+
 const lastText = () => [...sent].reverse().find((c) => c.method === "sendMessage")?.payload.text ?? "";
 
 console.log("\nSinov natijalari:\n");
@@ -181,12 +206,12 @@ check("salomlashuv inglizcha", lastText().includes("Hello") && lastText().includ
 await postAi(message(4, "ertangi kunimni rejalashtir"));
 check("ai javobi yuborildi", lastText().includes("Bugungi reja tayyor"));
 check("\"yozmoqda\" belgisi ko'rsatildi", sent.some((c) => c.method === "sendChatAction"));
-check("so'rov tanlangan tilda so'raldi", (aiRequests[0]?.system ?? "").includes("English"));
+check("so'rov tanlangan tilda so'raldi", systemText(aiRequests[0]).includes("English"));
 check("savol modelga yetib bordi", aiRequests[0]?.messages?.at(-1)?.content === "ertangi kunimni rejalashtir");
 check(
   "xarakter ko'rsatmasi yuborildi",
-  (aiRequests[0]?.system ?? "").includes("Tone and character:") &&
-    (aiRequests[0]?.system ?? "").includes("Never belittle the person asking"),
+  systemText(aiRequests[0]).includes("Tone and character:") &&
+    systemText(aiRequests[0]).includes("Never belittle the person asking"),
 );
 
 // 6. Suhbat tarixi eslab qolinadi
@@ -213,6 +238,46 @@ aiResponse = { status: 401, text: "" };
 await postAi(message(54, "xato chiqsin"));
 check("ai xatosi tushuntirildi", lastText().includes("AI key isn't working"));
 aiResponse = { status: 200, text: "Bugungi reja tayyor." };
+
+// 6d. Veb qidiruv asbobi so'rovga qo'shiladi
+await postAi(message(55, "dollar kursi qancha"));
+check("qidiruv asbobi e'lon qilindi", aiRequests[0]?.tools?.[0]?.type === "web_search_20260209");
+check("qidiruv chegarasi berildi", aiRequests[0]?.tools?.[0]?.max_uses === 5, `(${aiRequests[0]?.tools?.[0]?.max_uses})`);
+check("qidiruv qoidasi ko'rsatmaga qo'shildi", systemText(aiRequests[0]).includes("Web search:"));
+check(
+  "o'zgarmas qism keshlanadi, o'zgaruvchani keyin keladi",
+  aiRequests[0]?.system?.[0]?.cache_control?.type === "ephemeral" &&
+    aiRequests[0]?.system?.[1]?.cache_control === undefined &&
+    aiRequests[0]?.system?.[1]?.text?.includes("Today is"),
+);
+
+// 6e. pause_turn — model davom ettirishni so'raydi, so'rov qayta yuboriladi
+aiQueue = [
+  aiBody(
+    [
+      { type: "server_tool_use", id: "srv_1", name: "web_search", input: { query: "dollar kursi" } },
+      { type: "web_search_tool_result", tool_use_id: "srv_1", content: [{ type: "web_search_result", url: "https://cbu.uz", title: "Kurs" }] },
+    ],
+    "pause_turn",
+  ),
+  aiBody([{ type: "text", text: "Bugungi kurs — 12 500 so'm." }]),
+];
+await postAi(message(56, "kursni ayting"));
+check("pause_turn da so'rov qayta yuborildi", aiRequests.length === 2, `(${aiRequests.length} ta so'rov)`);
+check("oraliq javob modelga qaytarildi", aiRequests[1]?.messages?.at(-1)?.role === "assistant");
+check("qidiruv bloklari o'zgarmasdan qaytdi", aiRequests[1]?.messages?.at(-1)?.content?.[0]?.type === "server_tool_use");
+check("pause_turn dan keyin javob yetkazildi", lastText().includes("12 500"));
+
+// 6f. Qidiruv xatosi (massiv o'rniga error obyekti) javobni buzmaydi
+aiQueue = [
+  aiBody([
+    { type: "web_search_tool_result", tool_use_id: "srv_2", content: { type: "web_search_tool_result_error", error_code: "max_uses_exceeded" } },
+    { type: "text", text: "Hozir topa olmadim." },
+  ]),
+];
+await postAi(message(57, "yana qidir"));
+check("qidiruv xatosi javobni buzmadi", lastText().includes("Hozir topa olmadim"));
+check("qidiruv xatosi loglandi", botLog.join("").includes("max_uses_exceeded"));
 
 // 7. /help tanlangan tilda
 sent.length = 0;

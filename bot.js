@@ -169,6 +169,10 @@ async function handleAiMessage(chatId, user, lang, text) {
       historyLength: history.length,
       inputTokens: answer.usage.input_tokens,
       outputTokens: answer.usage.output_tokens,
+      searches: answer.searches,
+      // Qidiruv xatosi javobni buzmaydi (model usiz ham javob beradi), lekin
+      // takrorlanaversa sabab logdan ko'rinib tursin.
+      ...(answer.searchErrors.length > 0 ? { searchErrors: answer.searchErrors } : {}),
     });
   } catch (error) {
     if (!(error instanceof ai.AiError)) throw error;

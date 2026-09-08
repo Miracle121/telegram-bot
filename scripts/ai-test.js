@@ -31,7 +31,10 @@ try {
   console.log(answer.text);
   console.log(
     `\n---\n${Math.round((Date.now() - startedAt) / 1000)} s · ` +
-      `kirish ${answer.usage.input_tokens ?? "?"} · chiqish ${answer.usage.output_tokens ?? "?"} token\n`,
+      `kirish ${answer.usage.input_tokens ?? "?"} · chiqish ${answer.usage.output_tokens ?? "?"} token · ` +
+      `qidiruv ${answer.searches}${answer.searchErrors.length > 0 ? ` (xato: ${answer.searchErrors.join(", ")})` : ""}\n` +
+      `kesh: yozildi ${answer.usage.cache_creation_input_tokens ?? 0} · ` +
+      `o'qildi ${answer.usage.cache_read_input_tokens ?? 0} token\n`,
   );
 } catch (error) {
   console.error(`\nXato (${error.code ?? "unknown"}): ${error.message}\n`);
