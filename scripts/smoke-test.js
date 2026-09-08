@@ -183,6 +183,11 @@ check("ai javobi yuborildi", lastText().includes("Bugungi reja tayyor"));
 check("\"yozmoqda\" belgisi ko'rsatildi", sent.some((c) => c.method === "sendChatAction"));
 check("so'rov tanlangan tilda so'raldi", (aiRequests[0]?.system ?? "").includes("English"));
 check("savol modelga yetib bordi", aiRequests[0]?.messages?.at(-1)?.content === "ertangi kunimni rejalashtir");
+check(
+  "xarakter ko'rsatmasi yuborildi",
+  (aiRequests[0]?.system ?? "").includes("Tone and character:") &&
+    (aiRequests[0]?.system ?? "").includes("Never belittle the person asking"),
+);
 
 // 6. Suhbat tarixi eslab qolinadi
 await postAi(message(5, "endi qisqartir"));
