@@ -13,8 +13,10 @@ import * as store from "./store.js";
 import * as ai from "./ai.js";
 import * as bilim from "./bilim.js";
 import * as agentlar from "./agentlar.js";
+import * as kover from "./kover.js";
 import {
   aiErrorText,
+  koverReasonText,
   chooseLanguagePrompt,
   detectLanguage,
   isSupported,
@@ -240,6 +242,16 @@ async function handlePost(chatId, user, lang, topic) {
       await tg.sendRichText(chatId, t(lang, "postLimitReached", { max: String(result.maxRewrites) }));
     }
 
+    // Rasm avval ketadi, matn keyin: post izohga sig'maydi (izoh chegarasi 1024 belgi).
+    // Rasm yuborilmasa post baribir yetib boradi — bitta kover uchun ish yo'qolmasin.
+    if (result.kover) {
+      try {
+        await tg.sendPhoto(chatId, result.kover.buffer);
+      } catch (error) {
+        log.warn("kover yuborilmadi", { userId: user.id, error: error.message });
+      }
+    }
+
     await tg.sendRichText(chatId, result.post + (result.truncated ? t(lang, "aiTruncated") : ""));
 
     log.info("post yozildi", {
@@ -248,6 +260,8 @@ async function handlePost(chatId, user, lang, topic) {
       topic,
       verdict: result.verdict,
       rewrites: result.rewrites,
+      kover: result.kover ? result.kover.usul : "yo'q",
+      ...(result.kover?.sabab ? { koverSabab: result.kover.sabab } : {}),
       bilimCalls: result.material.bilimCalls,
       searches: result.material.searches,
       inputTokens: result.usage.input_tokens,
@@ -292,6 +306,13 @@ async function sendStage(chatId, lang, stage) {
           round: String(stage.round),
           max: String(stage.maxRewrites),
         }));
+    return;
+  }
+
+  if (stage.type === "kover") {
+    await tg.sendRichText(chatId, stage.usul === "api"
+      ? t(lang, "postStageKoverApi")
+      : t(lang, "postStageKoverTemplate", { sabab: koverReasonText(lang, stage.sabab) }));
     return;
   }
 
@@ -474,6 +495,10 @@ async function start() {
 
   // Xarakter fayllari yo'qligi ishga tushishga to'sqinlik qilmaydi: faqat `/post`
   // ishlamaydi, qolgan hamma narsa avvalgidek. Startda ogohlantirib qo'yamiz.
+  if (ai.enabled && config.kover.enabled && !kover.hasFont) {
+    log.warn("kover shrifti o'qilmadi (assets/DejaVuSans-Bold.ttf) — shablon matnsiz chiziladi");
+  }
+
   if (ai.enabled) {
     if (agentlar.ready()) {
       log.info("agentlar o'qildi", { dir: config.agentlar.dir, maxRewrites: config.agentlar.maxRewrites });

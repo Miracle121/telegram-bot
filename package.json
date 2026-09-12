@@ -20,6 +20,7 @@
   },
   "dependencies": {
     "@anthropic-ai/sdk": "^0.124.0",
-    "express": "^5.1.0"
+    "express": "^5.1.0",
+    "pureimage": "^0.4.20"
   }
 }

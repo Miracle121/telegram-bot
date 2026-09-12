@@ -222,15 +222,30 @@ export async function yozPost({ topic, lang, userName, onStage = () => {} }) {
   let history = [{ role: "user", content: writerPrompt(topic, material.text) }];
   let post = "";
   let truncated = false;
+  // Kover bir marta yasaladi va qayta yozishda saqlanib qoladi: mavzu o'zgarmagan,
+  // har qayta yozishda yangi rasm esa narxni ikki-uch barobar oshirardi.
+  let kover = null;
 
   for (let round = 0; ; round += 1) {
     // 2-bosqich: yozuvchi. Qayta yozishda tarixda oldingi varianti va sabab turadi —
     // shuning uchun u nimani tuzatayotganini ko'radi.
-    const written = await ai.ask({ history, lang, userName, mode: "yozuvchi", roleText: writer });
+    const written = await ai.ask({
+      history,
+      lang,
+      userName,
+      mode: "yozuvchi",
+      roleText: writer,
+      koverDone: Boolean(kover),
+    });
     addUsage(usage, written.usage);
     post = written.text;
     truncated = written.truncated;
     await onStage({ type: "yozuvchi", round, maxRewrites });
+
+    if (!kover && written.kover) {
+      kover = written.kover;
+      await onStage({ type: "kover", usul: kover.usul, sabab: kover.sabab });
+    }
 
     // 3-bosqich: muharrir. Tarixsiz — u faqat mavzu, material va postni ko'radi,
     // yozuvchi bilan bahslashmaydi.
@@ -262,6 +277,7 @@ export async function yozPost({ topic, lang, userName, onStage = () => {} }) {
   return {
     post,
     truncated,
+    kover,
     material,
     verdict: last.verdict,
     reasons: last.reasons,

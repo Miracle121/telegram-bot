@@ -113,6 +113,30 @@ if (!Number.isInteger(agentMaxRewrites) || agentMaxRewrites < 0 || agentMaxRewri
   errors.push("AGENT_MAX_REWRITES 0 dan 5 gacha butun son bo'lishi kerak.");
 }
 
+// --- Kover rasm ---
+// Kalit ixtiyoriy: bo'lmasa kover shablon bo'lib chiziladi (lokal, bepul).
+// Shu tanlov tufayli rasm API'siz ham bot to'liq ishlaydi.
+const koverEnabled = (process.env.KOVER ?? "on").trim().toLowerCase();
+if (!["on", "off"].includes(koverEnabled)) {
+  errors.push("KOVER faqat \"on\" yoki \"off\" bo'lishi mumkin.");
+}
+
+const koverApiKey = (process.env.KOVER_API_KEY ?? "").trim();
+const koverModel = (process.env.KOVER_MODEL ?? "gemini-3.1-flash-image").trim();
+const koverApiBase = (process.env.KOVER_API_BASE ?? "https://generativelanguage.googleapis.com")
+  .trim()
+  .replace(/\/+$/, "");
+
+// Rasm generatsiyasi matndan sekinroq. Chegara Telegram foydalanuvchisi kutadigan
+// vaqtdan kelib chiqadi: bundan uzoq kutgandan ko'ra shablon koverni yuborgan ma'qul.
+const koverTimeoutMs = Number.parseInt(process.env.KOVER_TIMEOUT_MS ?? "60000", 10);
+if (!Number.isInteger(koverTimeoutMs) || koverTimeoutMs < 5000) {
+  errors.push("KOVER_TIMEOUT_MS kamida 5000 (5 soniya) bo'lishi kerak.");
+}
+
+// Shablon koverning pastiga yoziladigan ism.
+const koverBrand = (process.env.KOVER_BRAND ?? "Mrxone").trim();
+
 const port = Number.parseInt(process.env.PORT ?? "3000", 10);
 if (!Number.isInteger(port) || port < 1 || port > 65535) {
   errors.push("PORT 1 dan 65535 gacha butun son bo'lishi kerak.");
@@ -150,5 +174,13 @@ export const config = Object.freeze({
   agentlar: Object.freeze({
     dir: agentlarDir,
     maxRewrites: agentMaxRewrites,
+  }),
+  kover: Object.freeze({
+    enabled: koverEnabled === "on",
+    apiKey: koverApiKey,
+    apiBase: koverApiBase,
+    model: koverModel,
+    timeoutMs: koverTimeoutMs,
+    brand: koverBrand,
   }),
 });

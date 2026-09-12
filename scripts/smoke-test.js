@@ -5,13 +5,15 @@
 // Haqiqiy token ham, internet ham kerak emas.
 
 import http from "node:http";
-import { spawn } from "node:child_process";
+import { spawn, spawnSync } from "node:child_process";
 import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
+import { pathToFileURL } from "node:url";
 
 const API_PORT = 8791;
 const AI_PORT = 8792;
+const KOVER_PORT = 8793;
 const BOT_PORT = 3991;
 const SECRET = "test_secret_0123456789abcdef";
 const DATA_DIR = fs.mkdtempSync(path.join(os.tmpdir(), "bot-smoke-"));
@@ -37,17 +39,25 @@ fs.writeFileSync(path.join(AGENTLAR_DIR, "muharrir.md"), "# Muharrir\n\nUydirma 
 
 const sent = []; // sendMessage / answerCallbackQuery chaqiruvlari
 
+const PNG_SIGNATURE = Buffer.from([0x89, 0x50, 0x4e, 0x47]);
+
 const api = http.createServer((req, res) => {
-  let body = "";
-  req.on("data", (c) => (body += c));
+  // Bayt sifatida yig'amiz: sendPhoto multipart yuboradi, uni satrga aylantirsak buziladi.
+  const chunks = [];
+  req.on("data", (c) => chunks.push(c));
   req.on("end", () => {
+    const raw = Buffer.concat(chunks);
     const method = req.url.split("/").pop();
-    const payload = body ? JSON.parse(body) : {};
+
+    const payload = method === "sendPhoto"
+      ? { bytes: raw.length, isPng: raw.includes(PNG_SIGNATURE) }
+      : (raw.length > 0 ? JSON.parse(raw.toString()) : {});
     sent.push({ method, payload });
 
     const results = {
       getMe: { id: 1, is_bot: true, username: "smoke_test_bot" },
       sendMessage: { message_id: sent.length },
+      sendPhoto: { message_id: sent.length },
       answerCallbackQuery: true,
       editMessageReplyMarkup: true,
       sendChatAction: true,
@@ -117,6 +127,42 @@ const aiApi = http.createServer((req, res) => {
 
 await new Promise((r) => aiApi.listen(AI_PORT, r));
 
+// Soxta rasm API'si (Gemini o'rnida). `koverResponse` bilan holatlarni almashtiramiz.
+const koverRequests = [];
+let koverResponse = { status: 200, kind: "png" };
+
+// 1x1 shaffof PNG — API rostdan rasm qaytargan holatni ifodalaydi.
+const PNG_1X1 =
+  "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mP8z8BQDwAEhQGAhKmMIQAAAABJRU5ErkJggg==";
+
+const koverApi = http.createServer((req, res) => {
+  let body = "";
+  req.on("data", (c) => (body += c));
+  req.on("end", () => {
+    koverRequests.push(body ? JSON.parse(body) : {});
+
+    if (koverResponse.status !== 200) {
+      res.writeHead(koverResponse.status, { "Content-Type": "application/json" });
+      res.end(JSON.stringify({ error: { code: koverResponse.status, message: "soxta xato" } }));
+      return;
+    }
+
+    const content = koverResponse.kind === "png"
+      ? [{ type: "image", mime_type: "image/png", data: PNG_1X1 }]
+      : [{ type: "text", text: "bu rasm emas" }];
+
+    res.writeHead(200, { "Content-Type": "application/json" });
+    res.end(JSON.stringify({
+      id: "v1_soxta",
+      object: "interaction",
+      status: "completed",
+      steps: [{ type: "model_output", content }],
+    }));
+  });
+});
+
+await new Promise((r) => koverApi.listen(KOVER_PORT, r));
+
 const PROJECT_ROOT = path.join(import.meta.dirname, "..");
 
 const bot = spawn(process.execPath, ["bot.js"], {
@@ -134,6 +180,9 @@ const bot = spawn(process.execPath, ["bot.js"], {
     AI_EFFORT: "low",
     BILIM_DIR,
     AGENTLAR_DIR,
+    KOVER_API_KEY: "soxta-kover-kaliti",
+    KOVER_API_BASE: `http://127.0.0.1:${KOVER_PORT}`,
+    KOVER_BRAND: "Mrxone",
   },
   stdio: ["ignore", "pipe", "pipe"],
 });
@@ -204,6 +253,33 @@ const allText = () => sent.filter((c) => c.method === "sendMessage").map((c) => 
 const systemText = (req) => JSON.stringify(req?.system ?? "");
 
 const lastText = () => [...sent].reverse().find((c) => c.method === "sendMessage")?.payload.text ?? "";
+
+/**
+ * Modulni alohida jarayonda yuklaydi va JSON natijasini qaytaradi.
+ *
+ * Bot bir marta ishga tushadi va uning `env` i o'zgarmaydi; kalitsiz yoki
+ * `KOVER=off` holatlarini esa faqat boshqa `env` bilan sinash mumkin.
+ */
+function childJson(script, env) {
+  const out = spawnSync(process.execPath, ["--input-type=module", "-e", script], {
+    cwd: PROJECT_ROOT,
+    encoding: "utf8",
+    env: {
+      ...process.env,
+      TELEGRAM_BOT_TOKEN: "123456789:AAFakeTokenForLocalSmokeTest_abcdefg",
+      WEBHOOK_SECRET: SECRET,
+      PUBLIC_URL: "",
+      BILIM_DIR,
+      ...env,
+    },
+  });
+
+  try {
+    return JSON.parse((out.stdout ?? "").trim().split("\n").at(-1));
+  } catch {
+    return { xato: out.stderr };
+  }
+}
 
 console.log("\nSinov natijalari:\n");
 
@@ -533,6 +609,191 @@ check(
   systemText(aiRequests[2]).includes("Yangi mezon: sarlavha shart"),
 );
 
+// ---------------------------------------------------------------
+// 6i. Kover rasm — uchinchi vosita
+// ---------------------------------------------------------------
+
+{
+  const tool = aiRequests[0]?.tools?.find((item) => item.name === "kover_rasm");
+  check("kover vositasi e'lon qilindi", Boolean(tool));
+  check(
+    "kover vositasiga tavsif berildi",
+    (tool?.description?.length ?? 0) > 200 && tool.description.includes("cover image"),
+  );
+  check(
+    "kover vositasi tavsif va sarlavha so'raydi",
+    tool?.input_schema?.required?.join(",") === "tavsif,sarlavha",
+  );
+}
+
+/** Yozuvchining kover chaqirig'i. */
+const koverUse = (id = "kv_1") =>
+  aiBody(
+    [{
+      type: "tool_use",
+      id,
+      name: "kover_rasm",
+      input: { tavsif: "a desk with a laptop", sarlavha: "Landing narxi" },
+    }],
+    "tool_use",
+  );
+
+const lastPhoto = () => [...sent].reverse().find((c) => c.method === "sendPhoto")?.payload;
+
+// --- API ishlagan holat ---
+koverResponse = { status: 200, kind: "png" };
+koverRequests.length = 0;
+aiQueue = [
+  aiBody([{ type: "text", text: "Material." }]),
+  koverUse("kv_1"),
+  aiBody([{ type: "text", text: "Post matni." }]),
+  aiBody([{ type: "text", text: "O'TDI" }]),
+];
+// iz + yozuvchi + kover + muharrir + post = 5 xabar (rasm alohida sendPhoto bo'lib ketadi)
+await postCommand(message(74, "/post kover"), 5);
+
+check("rasm API'ga so'rov ketdi", koverRequests.length === 1, `(${koverRequests.length})`);
+check("so'rovda model ko'rsatildi", Boolean(koverRequests[0]?.model));
+check("so'rov 16:9 nisbatda", koverRequests[0]?.response_format?.aspect_ratio === "16:9");
+check(
+  "rasmda matn bo'lmasligi so'raldi",
+  String(koverRequests[0]?.input?.[0]?.text ?? "").includes("no text"),
+);
+check(
+  "modelning tavsifi so'rovga tushdi",
+  String(koverRequests[0]?.input?.[0]?.text ?? "").includes("a desk with a laptop"),
+);
+check("kover API'dan olingani izda ko'rindi", allText().includes("image generated"));
+check("rasm Telegram'ga yuborildi", lastPhoto()?.isPng === true);
+check(
+  "modelga qisqa natija qaytdi",
+  aiRequests[2]?.messages?.at(-1)?.content?.[0]?.content === "Kover tayyor.",
+);
+check("kover postdan oldin ketdi", sent.findIndex((c) => c.method === "sendPhoto") < sent.length - 1);
+check("post ham yetkazildi", lastText().includes("Post matni"));
+
+// --- Limit tugadi: shablonga o'tadi ---
+koverResponse = { status: 429 };
+aiQueue = [
+  aiBody([{ type: "text", text: "Material." }]),
+  koverUse("kv_2"),
+  aiBody([{ type: "text", text: "Limitli post." }]),
+  aiBody([{ type: "text", text: "O'TDI" }]),
+];
+await postCommand(message(75, "/post limit"), 5);
+
+check("limitda shablonga o'tildi", allText().includes("quota spent"));
+check("shablon ham PNG bo'lib yuborildi", lastPhoto()?.isPng === true);
+check("shablon rostdan chizildi", (lastPhoto()?.bytes ?? 0) > 5000, `(${lastPhoto()?.bytes} bayt)`);
+check("limitda ham post yetkazildi", lastText().includes("Limitli post"));
+
+// --- Javob rasm emas: shablon, xatolik yo'q ---
+koverResponse = { status: 200, kind: "matn" };
+aiQueue = [
+  aiBody([{ type: "text", text: "Material." }]),
+  koverUse("kv_3"),
+  aiBody([{ type: "text", text: "Buzuq javobli post." }]),
+  aiBody([{ type: "text", text: "O'TDI" }]),
+];
+await postCommand(message(76, "/post buzuq"), 5);
+check("buzuq javobda shablon chizildi", allText().includes("made no sense"));
+check("buzuq javobda ham post yetkazildi", lastText().includes("Buzuq javobli post"));
+
+// --- Muharrir bosqichida chaqirilsa: rad etiladi ---
+koverResponse = { status: 200, kind: "png" };
+koverRequests.length = 0;
+aiQueue = [
+  aiBody([{ type: "text", text: "Material." }]),
+  aiBody([{ type: "text", text: "Koversiz post." }]),
+  aiBody([{ type: "tool_use", id: "kv_4", name: "kover_rasm", input: { tavsif: "x", sarlavha: "y" } }], "tool_use"),
+  aiBody([{ type: "text", text: "O'TDI" }]),
+];
+await postCommand(message(77, "/post chegara"), 4);
+
+const muharrirResult = aiRequests[3]?.messages?.at(-1)?.content?.[0];
+check("muharrirning kover chaqirig'i rad etildi", muharrirResult?.is_error === true);
+check(
+  "rad sababi tushuntirildi",
+  String(muharrirResult?.content ?? "").includes("faqat post yozishda"),
+);
+check("chegara buzilganda rasm yasalmadi", koverRequests.length === 0, `(${koverRequests.length})`);
+
+// --- Bitta postga ikkita kover: ikkinchisi rad etiladi ---
+koverRequests.length = 0;
+aiQueue = [
+  aiBody([{ type: "text", text: "Material." }]),
+  aiBody(
+    [
+      { type: "tool_use", id: "kv_5", name: "kover_rasm", input: { tavsif: "a", sarlavha: "b" } },
+      { type: "tool_use", id: "kv_6", name: "kover_rasm", input: { tavsif: "c", sarlavha: "d" } },
+    ],
+    "tool_use",
+  ),
+  aiBody([{ type: "text", text: "Ikki koverli post." }]),
+  aiBody([{ type: "text", text: "O'TDI" }]),
+];
+await postCommand(message(78, "/post ikkita"), 5);
+
+const ikkiNatija = aiRequests[2]?.messages?.at(-1)?.content ?? [];
+check("birinchi kover yasaldi", ikkiNatija[0]?.is_error === undefined);
+check("ikkinchi kover rad etildi", ikkiNatija[1]?.is_error === true);
+check("ikkinchisiga rasm so'ralmadi", koverRequests.length === 1, `(${koverRequests.length})`);
+
+// --- Qayta yozishda kover qaytadan yasalmaydi ---
+koverRequests.length = 0;
+aiQueue = [
+  aiBody([{ type: "text", text: "Material." }]),
+  koverUse("kv_7"),
+  aiBody([{ type: "text", text: "Birinchi variant." }]),
+  aiBody([{ type: "text", text: "QAYTA YOZ\nSabab: juda qisqa." }]),
+  koverUse("kv_8"),
+  aiBody([{ type: "text", text: "Ikkinchi variant." }]),
+  aiBody([{ type: "text", text: "O'TDI" }]),
+];
+// iz + yozuvchi + kover + muharrir + qayta yozdi + muharrir + post = 7 xabar
+await postCommand(message(79, "/post qayta kover"), 7);
+
+check("qayta yozishda yangi rasm yasalmadi", koverRequests.length === 1, `(${koverRequests.length})`);
+check(
+  "qayta chaqiruv rad etildi",
+  aiRequests[5]?.messages?.at(-1)?.content?.[0]?.is_error === true,
+);
+check("bitta rasm yuborildi", sent.filter((c) => c.method === "sendPhoto").length === 1);
+
+// --- Kalitsiz holat: kover.js to'g'ridan-to'g'ri tekshiriladi ---
+// Bot jarayoni kalit bilan ishga tushgan, shuning uchun bu shoxobcha alohida
+// jarayonda sinaladi — env ni yo'lda o'zgartirib bo'lmaydi.
+{
+  const koverUrl = pathToFileURL(path.join(PROJECT_ROOT, "kover.js")).href;
+  const script =
+    `const kover = await import(${JSON.stringify(koverUrl)});` +
+    `const r = await kover.yasa({ tavsif: "x", sarlavha: "Landing narxi qancha" });` +
+    `console.log(JSON.stringify({ usul: r.usul, sabab: r.sabab, bytes: r.buffer.length,` +
+    ` png: r.buffer.subarray(0, 4).toString("hex"), font: kover.hasFont }));`;
+
+  const result = childJson(script, { KOVER_API_KEY: "", KOVER_BRAND: "Mrxone" });
+
+  check("kalitsiz shablonga o'tdi", result.usul === "shablon" && result.sabab === "kalitYoq");
+  check("shablon haqiqiy PNG", result.png === "89504e47", `(${result.png})`);
+  check("shablonda matn chizildi", result.font === true && result.bytes > 5000, `(${result.bytes} bayt)`);
+}
+
+// --- KOVER=off: vosita umuman e'lon qilinmaydi ---
+{
+  const aiUrl = pathToFileURL(path.join(PROJECT_ROOT, "ai.js")).href;
+  const script =
+    `const ai = await import(${JSON.stringify(aiUrl)});` +
+    `console.log(JSON.stringify({ names: ai.toolNames() }));`;
+
+  const names = childJson(script, {
+    KOVER: "off",
+    ANTHROPIC_API_KEY: "sk-ant-smoke-test-0123456789",
+  }).names ?? [];
+
+  check("KOVER=off da vosita e'lon qilinmadi", !names.includes("kover_rasm"), `(${names.join(", ")})`);
+  check("boshqa vositalar joyida qoldi", names.includes("bilim_qidiruv"), `(${names.join(", ")})`);
+}
+
 // 7. /help tanlangan tilda
 sent.length = 0;
 await post(message(6, "/help"));
@@ -584,6 +845,7 @@ if (process.platform === "win32") {
 
 api.close();
 aiApi.close();
+koverApi.close();
 fs.rmSync(DATA_DIR, { recursive: true, force: true });
 
 console.log(`\n${failures === 0 ? "Barcha sinovlar o'tdi" : `${failures} ta sinov muvaffaqiyatsiz`}\n`);

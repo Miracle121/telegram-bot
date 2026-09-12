@@ -15,6 +15,8 @@ bilim.js               bilim bazasi — bilim/ dagi fayllarni o'qish va qidirish
 bilim/                 bilim bazasining o'zi (.md / .txt fayllar)
 agentlar.js            post oqimi — xarakter fayllarini o'qish, yozuvchi/muharrir sikli
 agentlar/              agentlarning xarakter fayllari (yozuvchi.md, muharrir.md)
+kover.js               kover rasm — Gemini API va lokal shablon
+assets/                DejaVuSans-Bold.ttf — shablon kover uchun shrift
 config.js              .env o'qish va tekshirish (xato bo'lsa ishga tushmaydi)
 telegram.js            Bot API klienti — timeout, qayta urinish, 429, uzun matnni bo'lish
 i18n.js                uz / ru / en matnlari va til tanlash klaviaturasi
@@ -252,6 +254,7 @@ qidirishdan o'nlab barobar arzon.
    │
    ├─ 1. material yig'ish   bilim_qidiruv + web_search
    ├─ 2. YOZUVCHI           agentlar/yozuvchi.md ga qarab post yozadi
+   │                        + kover_rasm bilan muqova yasaydi
    └─ 3. MUHARRIR           agentlar/muharrir.md ga qarab tekshiradi
          ├─ o'tdi      → post yuboriladi
          └─ qayta yoz  → sabab yozuvchiga qaytadi (maksimal 2 marta)
@@ -264,6 +267,7 @@ Foydalanuvchi oqimni ko'rib turadi — har bosqichdan keyin qisqa qator keladi:
 • bilim bazasi: «landing narxi» → 3 parcha — narxlar.md, xizmatlar.md
 • internet qidiruvi: 1 marta
 ✍️ Yozuvchi yozdi
+🖼 Kover: rasm yasaldi
 📝 Muharrir: qayta yoz
 • postda "kafolat 60 kun" deyilgan, materialda 30 kun
 ✍️ Yozuvchi qayta yozdi (1/2)
@@ -298,7 +302,57 @@ yomonida 7 ta. Qidiruvli material bosqichi eng qimmati — taxminan $0.26, qolga
 bosqichlar ~$0.02 dan. `AGENT_MAX_REWRITES=0` qo'yilsa muharrir baribir tekshiradi,
 lekin qayta yozish bo'lmaydi.
 
+## Kover rasm
+
+Yozuvchi post uchun muqova yasaydi: `kover_rasm` vositasini bir marta chaqiradi,
+rasm postdan oldin alohida xabar bo'lib ketadi.
+
+**Asosiy yo'l — Gemini.** Kalit `.env` da bo'lsa, modelning tavsifi
+`generativelanguage.googleapis.com/v1beta/interactions` ga yuboriladi, natija 16:9
+PNG bo'lib qaytadi. So'rovda alohida talab bor: **rasmda matn bo'lmasin** — rasm
+generatorlari harflarni buzib chizadi, sarlavha esa postning o'zida turibdi.
+
+**Zaxira yo'l — shablon.** Quyidagilarning har birida lokal kover chiziladi va
+foydalanuvchi sababni ko'radi:
+
+| Holat | Nima ko'rsatiladi |
+|---|---|
+| Kalit yo'q | `Kover: shablon — rasm kaliti qo'yilmagan` |
+| 401 / 403 | `rasm kaliti ishlamadi` |
+| 429 | `limit tugagan` |
+| 400 / 422 | `so'rov rad etildi` |
+| 5xx, timeout, tarmoq | `xizmat javob bermadi` |
+| Javobda rasm yo'q yoki bayt rasm emas | `javob tushunarsiz` |
+
+Shablon — gradient fon, sarlavha (3 qatorgacha, o'ralib ketadi) va `KOVER_BRAND`
+dagi ism. Tarmoq so'rovi yo'q, narxi nol, `pureimage` bilan chiziladi. Shrift —
+`assets/DejaVuSans-Bold.ttf` (kirill va lotin to'liq). Shrift o'qilmasa ham
+to'xtamaydi: fon baribir chiziladi.
+
+**Ikki qattiq chegara** — ko'rsatmada emas, `runTool` kodida. Bot ochiq va har rasm
+pul turadi:
+
+1. Vositani **faqat yozuvchi** chaqira oladi. Oddiy suhbatda yoki muharrir
+   bosqichida chaqirilsa `is_error` qaytadi va model javobini vositasiz yakunlaydi.
+2. **Bitta post — bitta rasm.** Ikkinchi chaqiruv rad etiladi, qayta yozishda ham
+   yangi rasm yasalmaydi (mavzu o'zgarmagan).
+
+Rasmning baytlari modelga qaytarilmaydi — `tool_result` ga bir qator matn ketadi.
+Rasmni modelga ko'rsatish o'n minglab token bo'lardi, foydasi esa yo'q.
+
+```
+KOVER=on                            # butunlay o'chirish: off
+KOVER_API_KEY=                      # bo'sh bo'lsa doim shablon
+KOVER_MODEL=gemini-3.1-flash-image
+KOVER_TIMEOUT_MS=60000
+KOVER_BRAND=Mrxone
+```
+
+**Xarajat.** Vosita ta'rifi ~150 token (keshlanadi), chaqiruv +1 model so'rovi
+(~$0.02), rasmning o'zi provayder narxida. Shablon — bepul.
+
 ## Keyingi qadam
 
 Taqdimot va hujjat fayllarini tayyorlash (`.pptx`, `.xlsx`, `.docx`) — `code_execution`
-va Agent Skills orqali. Bunda `telegram.js` ga `sendDocument` qo'shilishi kerak bo'ladi.
+va Agent Skills orqali. `telegram.js` da `sendPhoto` bor, shu naqsh bo'yicha
+`sendDocument` qo'shiladi.

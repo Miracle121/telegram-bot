@@ -7,6 +7,7 @@
 import Anthropic from "@anthropic-ai/sdk";
 
 import * as bilim from "./bilim.js";
+import * as kover from "./kover.js";
 import { config } from "./config.js";
 import { LANGUAGE_NAMES } from "./i18n.js";
 
@@ -58,6 +59,46 @@ const BILIM_TOOL = {
   },
 };
 
+// Uchinchi vosita — kover rasm. Uni faqat yozuvchi chaqira oladi (`runTool` dagi
+// qattiq chegara), lekin e'lon hamma so'rovga qo'shiladi: ro'yxat o'zgarsa prompt-kesh
+// kuyardi. Bitta rasm pul turadi, shuning uchun ishonch ko'rsatmaga emas — kodga.
+const KOVER_TOOL = {
+  name: "kover_rasm",
+  description: [
+    "Make the cover image for the post you have just written. Call it exactly once per",
+    "post, when you already know what the post says.",
+    "",
+    "The image never carries text: image generators draw letters badly, and the words",
+    "belong in the post itself. Describe a scene, not a poster — an object, a place, a",
+    "mood that matches the topic.",
+    "",
+    "If the image cannot be generated (no key, quota spent, the service is down), a plain",
+    "template cover is drawn locally instead, using the sarlavha you pass. That is not an",
+    "error and needs no comment from you: write the post as usual either way.",
+    "",
+    "Do not call it for questions, plans or ordinary conversation — only for a post.",
+  ].join("\n"),
+  input_schema: {
+    type: "object",
+    properties: {
+      tavsif: {
+        type: "string",
+        description:
+          "What the picture shows, in English, one or two sentences. A concrete scene:" +
+          " \"a desk with a laptop showing a half-built website, morning light\"." +
+          " No text, no letters, no logos in the image.",
+      },
+      sarlavha: {
+        type: "string",
+        description:
+          "Three to five words in the user's language — the post's short title. It is" +
+          " printed on the template cover if image generation is unavailable.",
+      },
+    },
+    required: ["tavsif", "sarlavha"],
+  },
+};
+
 // Vositalar ro'yxati modul yuklanganda bir marta hisoblanadi va keyin o'zgarmaydi.
 // Sabab — prompt-kesh: kesh prefiks bo'yicha ishlaydi, tartib esa `tools -> system ->
 // messages`. Ro'yxat so'rovdan so'rovga o'zgarsa, har safar butun kesh kuyib ketardi.
@@ -69,10 +110,16 @@ const bilimReady = config.ai.enabled && bilim.stats().chunks > 0;
 
 const TOOL_LIST = [
   ...(bilimReady ? [BILIM_TOOL] : []),
+  ...(config.kover.enabled && config.ai.enabled ? [KOVER_TOOL] : []),
   ...(config.ai.webSearch ? [WEB_SEARCH_TOOL] : []),
 ];
 
 const TOOLS = TOOL_LIST.length > 0 ? TOOL_LIST : undefined;
+
+/** E'lon qilingan vositalar nomi — start logi va sinov uchun. */
+export function toolNames() {
+  return TOOL_LIST.map((tool) => tool.name);
+}
 
 /** Bazadan qidirish mumkinmi — start logi va `/help` matni uchun. */
 export const knowledgeBase = bilimReady;
@@ -238,7 +285,10 @@ const WRITER_INSTRUCTIONS = [
   "- Use only the facts in the material you were given. Never invent a price, deadline,",
   "  percentage, name, date or statistic. If the material does not cover something,",
   "  write around it rather than filling the gap.",
-  "- Do not call any tool. The material has already been gathered for you.",
+  "- Call kover_rasm once, before you write, so the post gets a cover. Whether the cover",
+  "  came from the image service or from the local template changes nothing in your text:",
+  "  never mention the cover in the post.",
+  "- Do not call any other tool. The material has already been gathered for you.",
   "- The Telegram formatting rules above still apply.",
   "",
   "The character file below was written by the bot owner. It defines your tone, the",
@@ -304,10 +354,11 @@ function systemPrompt(lang, userName, mode, roleText) {
  * @param {string}   params.userName  foydalanuvchi ismi — murojaat uchun
  * @param {string}   [params.mode]    "post" | "yozuvchi" | "muharrir" — bosqich ko'rsatmasi
  * @param {string}   [params.roleText] agent xarakter faylining matni (agentlar/*.md)
+ * @param {boolean}  [params.koverDone] kover allaqachon yasalgan — qaytadan yasalmasin
  * @returns {Promise<{ text: string, truncated: boolean, usage: object, searches: number,
  *                     searchErrors: string[], bilimCalls: object[] }>}
  */
-export async function ask({ history, lang, userName, mode, roleText }) {
+export async function ask({ history, lang, userName, mode, roleText, koverDone = false }) {
   if (!client) throw new AiError("disabled", "ANTHROPIC_API_KEY ko'rsatilmagan");
 
   const system = systemPrompt(lang, userName, mode, roleText);
@@ -320,8 +371,10 @@ export async function ask({ history, lang, userName, mode, roleText }) {
   const usage = { input_tokens: 0, output_tokens: 0 };
   const searchErrors = [];
   // Vosita rostdan chaqirilganini keyin ko'rsatish uchun: modelning gapiga emas, shu
-  // ro'yxatga qaraymiz.
+  // ro'yxatga qaraymiz. `mode` shu yerda turadi, chunki kover vositasi faqat yozuvchi
+  // bosqichida ishlaydi — chegarani kod qo'yadi, ko'rsatma emas.
   const bilimCalls = [];
+  const toolCtx = { bilimCalls, mode, kover: null, koverDone };
   let searches = 0;
   let response;
   let turnLimitHit = false;
@@ -374,11 +427,12 @@ export async function ask({ history, lang, userName, mode, roleText }) {
     messages.push({ role: "assistant", content: response.content });
 
     // Har bir `tool_use` ga javob qaytishi shart — biri qolib ketsa API xato beradi.
+    // Ketma-ket bajariladi, parallel emas: "bitta post — bitta kover" chegarasi
+    // parallel chaqiruvda poygaga tushib qolardi.
     if (needsTools) {
-      messages.push({
-        role: "user",
-        content: toolUses.map((block) => runTool(block, bilimCalls)),
-      });
+      const results = [];
+      for (const block of toolUses) results.push(await runTool(block, toolCtx));
+      messages.push({ role: "user", content: results });
     }
   }
 
@@ -397,6 +451,7 @@ export async function ask({ history, lang, userName, mode, roleText }) {
     searches,
     searchErrors,
     bilimCalls,
+    kover: toolCtx.kover,
   };
 }
 
@@ -407,8 +462,10 @@ export async function ask({ history, lang, userName, mode, roleText }) {
  * ma'lumot beradi va u javobini vositasiz yakunlaydi. Bu `web_search` xatosi bilan bir
  * xil qoida — bitta vosita ishlamagani uchun butun javob yo'qolmasin.
  */
-function runTool(block, calls) {
+async function runTool(block, ctx) {
   const result = { type: "tool_result", tool_use_id: block.id };
+
+  if (block.name === KOVER_TOOL.name) return runKover(block, ctx, result);
 
   if (block.name !== BILIM_TOOL.name) {
     return { ...result, is_error: true, content: `Bunday vosita yo'q: ${block.name}` };
@@ -418,7 +475,7 @@ function runTool(block, calls) {
 
   try {
     const found = bilim.search(query);
-    calls.push({
+    ctx.bilimCalls.push({
       query,
       chunks: found.hits.length,
       files: [...new Set(found.hits.map((hit) => hit.file))],
@@ -426,8 +483,46 @@ function runTool(block, calls) {
     return { ...result, content: bilim.format(found) };
   } catch (error) {
     const message = error?.message ?? String(error);
-    calls.push({ query, chunks: 0, files: [], error: message });
+    ctx.bilimCalls.push({ query, chunks: 0, files: [], error: message });
     return { ...result, is_error: true, content: `Bilim bazasi o'qilmadi: ${message}` };
+  }
+}
+
+/**
+ * Kover rasm vositasi.
+ *
+ * Ikkita chegara shu yerda, ko'rsatmada emas: bot ochiq va har rasm pul turadi,
+ * model esa ko'rsatmadan chetga chiqishi mumkin.
+ *   1. faqat yozuvchi bosqichi chaqira oladi
+ *   2. bitta post — bitta rasm
+ *
+ * Rasmning o'zi modelga qaytarilmaydi: bir qator matn yetarli, baytlar esa javob
+ * obyektida yuqoriga chiqadi. Rasmni modelga ko'rsatish o'n minglab token bo'lardi.
+ */
+async function runKover(block, ctx, result) {
+  if (ctx.mode !== "yozuvchi") {
+    return { ...result, is_error: true, content: "Bu vosita faqat post yozishda ishlaydi." };
+  }
+  // `koverDone` — oldingi so'rovda yasalgani (qayta yozish), `ctx.kover` — shu so'rovda.
+  if (ctx.koverDone || ctx.kover) {
+    return { ...result, is_error: true, content: "Kover allaqachon yasaldi — bittadan ko'p kerak emas." };
+  }
+
+  const tavsif = typeof block.input?.tavsif === "string" ? block.input.tavsif.trim() : "";
+  const sarlavha = typeof block.input?.sarlavha === "string" ? block.input.sarlavha.trim() : "";
+
+  try {
+    const made = await kover.yasa({ tavsif, sarlavha });
+    ctx.kover = { ...made, sarlavha };
+    return {
+      ...result,
+      content: made.usul === "api"
+        ? "Kover tayyor."
+        : `Kover shablon bo'lib chizildi (${made.sabab}). Post matnini o'zgartirish shart emas.`,
+    };
+  } catch (error) {
+    // `kover.yasa` xato tashlamasligi kerak, lekin shunda ham post yo'qolmasin.
+    return { ...result, is_error: true, content: `Kover yasalmadi: ${error?.message ?? error}` };
   }
 }
 

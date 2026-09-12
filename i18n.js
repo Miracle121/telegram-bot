@@ -76,6 +76,14 @@ const LOCALES = {
     postTraceNone: "• hech qanday vosita chaqirilmadi — model o'zi javob berdi",
     postStageWriter: "✍️ <b>Yozuvchi</b> yozdi",
     postStageRewrite: "✍️ <b>Yozuvchi</b> qayta yozdi ({round}/{max})",
+    postStageKoverApi: "🖼 <b>Kover:</b> rasm yasaldi",
+    postStageKoverTemplate: "🖼 <b>Kover:</b> shablon — {sabab}",
+    koverKalitYoq: "rasm kaliti qo'yilmagan",
+    koverKalitIshlamadi: "rasm kaliti ishlamadi",
+    koverLimit: "limit tugagan",
+    koverRad: "so'rov rad etildi",
+    koverJavobYoq: "xizmat javob bermadi",
+    koverBuzuq: "javob tushunarsiz",
     postStageEditorPass: "📝 <b>Muharrir:</b> o'tdi ✅",
     postStageEditorFail: "📝 <b>Muharrir:</b> qayta yoz\n{reasons}",
     postStageEditorUnclear: "📝 <b>Muharrir</b> javobini tushunmadim — post shundayligicha qoldi",
@@ -131,6 +139,14 @@ const LOCALES = {
     postTraceNone: "• инструмент не вызывался — модель ответила сама",
     postStageWriter: "✍️ <b>Автор</b> написал",
     postStageRewrite: "✍️ <b>Автор</b> переписал ({round}/{max})",
+    postStageKoverApi: "🖼 <b>Обложка:</b> картинка сгенерирована",
+    postStageKoverTemplate: "🖼 <b>Обложка:</b> шаблон — {sabab}",
+    koverKalitYoq: "ключ для картинок не задан",
+    koverKalitIshlamadi: "ключ не работает",
+    koverLimit: "лимит исчерпан",
+    koverRad: "запрос отклонён",
+    koverJavobYoq: "сервис не ответил",
+    koverBuzuq: "непонятный ответ",
     postStageEditorPass: "📝 <b>Редактор:</b> принято ✅",
     postStageEditorFail: "📝 <b>Редактор:</b> переписать\n{reasons}",
     postStageEditorUnclear: "📝 <b>Ответ редактора</b> непонятен — пост оставлен как есть",
@@ -186,6 +202,14 @@ const LOCALES = {
     postTraceNone: "• no tool was called — the model answered on its own",
     postStageWriter: "✍️ <b>The writer</b> wrote it",
     postStageRewrite: "✍️ <b>The writer</b> rewrote it ({round}/{max})",
+    postStageKoverApi: "🖼 <b>Cover:</b> image generated",
+    postStageKoverTemplate: "🖼 <b>Cover:</b> template — {sabab}",
+    koverKalitYoq: "no image key configured",
+    koverKalitIshlamadi: "the key didn't work",
+    koverLimit: "quota spent",
+    koverRad: "the request was refused",
+    koverJavobYoq: "the service didn't answer",
+    koverBuzuq: "the answer made no sense",
     postStageEditorPass: "📝 <b>The editor:</b> passed ✅",
     postStageEditorFail: "📝 <b>The editor:</b> rewrite\n{reasons}",
     postStageEditorUnclear: "📝 <b>The editor's answer</b> made no sense — the post is left as it is",
@@ -221,6 +245,13 @@ export function aiErrorText(language, code) {
   const key = `ai${code.charAt(0).toUpperCase()}${code.slice(1)}`;
   const locale = LOCALES[language] ?? LOCALES[DEFAULT_LANGUAGE];
   return Object.hasOwn(locale, key) ? t(language, key) : t(language, "aiUnknown");
+}
+
+/** Kover sababini (`kover.js` dagi kod) foydalanuvchi matniga aylantiradi. */
+export function koverReasonText(language, code) {
+  const key = `kover${String(code ?? "").charAt(0).toUpperCase()}${String(code ?? "").slice(1)}`;
+  const locale = LOCALES[language] ?? LOCALES[DEFAULT_LANGUAGE];
+  return Object.hasOwn(locale, key) ? t(language, key) : t(language, "koverJavobYoq");
 }
 
 /** Til tanlash uchun inline klaviatura. */

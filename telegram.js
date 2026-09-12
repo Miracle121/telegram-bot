@@ -6,6 +6,9 @@ import { config } from "./config.js";
 // Manzilni almashtirish mumkin — lokal test yoki o'z Bot API serveringiz uchun
 const API_HOST = (process.env.TELEGRAM_API_BASE ?? "https://api.telegram.org").replace(/\/+$/, "");
 const API_BASE = `${API_HOST}/bot${config.token}`;
+
+// Rasm matndan katta va sekinroq ketadi — unga alohida, uzunroq chegara.
+const PHOTO_TIMEOUT_MS = 60000;
 const REQUEST_TIMEOUT_MS = 10_000;
 const MAX_ATTEMPTS = 3;
 
@@ -150,6 +153,42 @@ export function splitText(text, limit = MAX_MESSAGE_LENGTH) {
 
   if (rest) chunks.push(rest);
   return chunks;
+}
+
+/**
+ * Rasm yuboradi.
+ *
+ * `callApi` dan alohida: u JSON yuboradi, rasm esa multipart bo'lishi kerak.
+ * Yangi paket kerak emas — `FormData` va `Blob` Node 20 ichida bor, `fetch`
+ * chegara qatorini o'zi qo'yadi.
+ *
+ * Qayta urinish yo'q: rasm katta, uni ikki marta yuborish trafik va vaqt.
+ * Yiqilsa `bot.js` postni matn bo'lib yuboraveradi.
+ */
+export async function sendPhoto(chatId, buffer, { caption = "", parseMode = "HTML" } = {}) {
+  const form = new FormData();
+  form.append("chat_id", String(chatId));
+  form.append("photo", new Blob([buffer], { type: "image/png" }), "kover.png");
+  if (caption) {
+    form.append("caption", caption);
+    form.append("parse_mode", parseMode);
+  }
+
+  const response = await fetch(`${API_BASE}/sendPhoto`, {
+    method: "POST",
+    body: form,
+    signal: AbortSignal.timeout(PHOTO_TIMEOUT_MS),
+  });
+
+  const body = await response.json().catch(() => ({}));
+  if (response.ok && body.ok) return body.result;
+
+  throw new TelegramError(
+    "sendPhoto",
+    response.status,
+    body.description ?? `HTTP ${response.status}`,
+    body.parameters,
+  );
 }
 
 export const answerCallbackQuery = (callbackQueryId, extra = {}) =>
