@@ -12,6 +12,7 @@ import * as tg from "./telegram.js";
 import * as store from "./store.js";
 import * as ai from "./ai.js";
 import * as bilim from "./bilim.js";
+import * as agentlar from "./agentlar.js";
 import {
   aiErrorText,
   chooseLanguagePrompt,
@@ -198,16 +199,17 @@ async function handleAiMessage(chatId, user, lang, text) {
 }
 
 // ---------------------------------------------------------------
-// /post — vositani sinash uchun
+// /post — material -> yozuvchi -> muharrir oqimi
 // ---------------------------------------------------------------
 
 /**
- * Mavzu bo'yicha material yig'adi va topilganini ko'rsatadi (post yozmaydi).
+ * Mavzu bo'yicha post yozadi.
  *
- * Oddiy suhbatdan ikki farqi bor:
- *  - tarix ishlatilmaydi ham, yozilmaydi ham — bu sinov, suhbat toza qolsin
- *  - javobdan oldin vosita izi yuboriladi: model nima desa ham, vosita rostdan
- *    chaqirilgani va nima topilgani shu yerdan ko'rinadi
+ * Oqimning o'zi `agentlar.js` da; bu yerda faqat Telegram tomoni — bosqich xabarlari,
+ * xatolar va log. Oddiy suhbatdan ikki farqi bor:
+ *  - tarix ishlatilmaydi ham, yozilmaydi ham — post suhbatni ifloslantirmasin
+ *  - har bosqichdan keyin qisqa xabar ketadi: oqim bir daqiqadan ko'p davom etadi,
+ *    jim turish esa "bot qotib qoldi" degan taassurot beradi
  */
 async function handlePost(chatId, user, lang, topic) {
   if (!ai.enabled) {
@@ -225,27 +227,47 @@ async function handlePost(chatId, user, lang, topic) {
   const startedAt = Date.now();
 
   try {
-    const answer = await ai.ask({
-      history: [{ role: "user", content: topic }],
+    const result = await agentlar.yozPost({
+      topic,
       lang,
       userName: user.first_name ?? "",
-      mode: "post",
+      onStage: (stage) => sendStage(chatId, lang, stage),
     });
 
-    await tg.sendRichText(chatId, toolTrace(lang, answer));
-    await tg.sendRichText(chatId, answer.text + (answer.truncated ? t(lang, "aiTruncated") : ""));
+    // Muharrir oxirigacha rozi bo'lmadi — postni baribir ko'rsatamiz, lekin
+    // foydalanuvchi buni bilib tursin.
+    if (result.verdict === "fail") {
+      await tg.sendRichText(chatId, t(lang, "postLimitReached", { max: String(result.maxRewrites) }));
+    }
 
-    log.info("post materiali yig'ildi", {
+    await tg.sendRichText(chatId, result.post + (result.truncated ? t(lang, "aiTruncated") : ""));
+
+    log.info("post yozildi", {
       userId: user.id,
       durationMs: Date.now() - startedAt,
       topic,
-      bilimCalls: answer.bilimCalls,
-      searches: answer.searches,
-      inputTokens: answer.usage.input_tokens,
-      outputTokens: answer.usage.output_tokens,
-      ...(answer.searchErrors.length > 0 ? { searchErrors: answer.searchErrors } : {}),
+      verdict: result.verdict,
+      rewrites: result.rewrites,
+      bilimCalls: result.material.bilimCalls,
+      searches: result.material.searches,
+      inputTokens: result.usage.input_tokens,
+      outputTokens: result.usage.output_tokens,
+      ...(result.material.searchErrors.length > 0
+        ? { searchErrors: result.material.searchErrors }
+        : {}),
     });
   } catch (error) {
+    // Xarakter fayli yo'q — bu AI xatosi emas, shuning uchun alohida matn:
+    // foydalanuvchi nimani tuzatish kerakligini bilsin.
+    if (error instanceof agentlar.AgentError) {
+      log.error("agent fayli o'qilmadi", { userId: user.id, file: error.file, reason: error.reason });
+      await tg.sendMessage(chatId, t(lang, "postAgentMissing", {
+        file: tg.escapeHtml(error.file),
+        reason: tg.escapeHtml(error.reason),
+      }));
+      return;
+    }
+
     if (!(error instanceof ai.AiError)) throw error;
 
     log.error("post xatosi", { userId: user.id, code: error.code, error: error.message });
@@ -254,6 +276,40 @@ async function handlePost(chatId, user, lang, topic) {
     stopTyping();
     busyUsers.delete(user.id);
   }
+}
+
+/** Oqimning bir bosqichi haqida qisqa xabar. Matn — javob tarkibidan, modelning gapidan emas. */
+async function sendStage(chatId, lang, stage) {
+  if (stage.type === "material") {
+    await tg.sendRichText(chatId, toolTrace(lang, stage.answer));
+    return;
+  }
+
+  if (stage.type === "yozuvchi") {
+    await tg.sendRichText(chatId, stage.round === 0
+      ? t(lang, "postStageWriter")
+      : t(lang, "postStageRewrite", {
+          round: String(stage.round),
+          max: String(stage.maxRewrites),
+        }));
+    return;
+  }
+
+  if (stage.verdict === "pass") {
+    await tg.sendRichText(chatId, t(lang, "postStageEditorPass"));
+    return;
+  }
+
+  if (stage.verdict === "unclear") {
+    await tg.sendRichText(chatId, t(lang, "postStageEditorUnclear"));
+    return;
+  }
+
+  const reasons = stage.reasons.length > 0
+    ? stage.reasons.map((reason) => `• ${tg.escapeHtml(reason)}`).join("\n")
+    : t(lang, "postNoReason");
+
+  await tg.sendRichText(chatId, t(lang, "postStageEditorFail", { reasons }));
 }
 
 /** Qaysi vosita chaqirilgani va nima topilgani — modeldan emas, javob tarkibidan olinadi. */
@@ -414,6 +470,16 @@ async function start() {
     log.info("bilim bazasi o'qildi", { dir: config.bilim.dir, ...bilim.stats() });
   } else {
     log.warn(`bilim bazasi bo'sh (${config.bilim.dir}/) — qidiruv vositasi e'lon qilinmadi`);
+  }
+
+  // Xarakter fayllari yo'qligi ishga tushishga to'sqinlik qilmaydi: faqat `/post`
+  // ishlamaydi, qolgan hamma narsa avvalgidek. Startda ogohlantirib qo'yamiz.
+  if (ai.enabled) {
+    if (agentlar.ready()) {
+      log.info("agentlar o'qildi", { dir: config.agentlar.dir, maxRewrites: config.agentlar.maxRewrites });
+    } else {
+      log.warn(`agentlar xarakter fayllari yo'q (${config.agentlar.dir}/) — /post ishlamaydi`);
+    }
   }
 
   if (config.webhookUrl) {

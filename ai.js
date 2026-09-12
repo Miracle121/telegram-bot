@@ -224,8 +224,54 @@ const POST_INSTRUCTIONS = [
   "empty, say that plainly instead of filling the space.",
 ].join("\n");
 
+/**
+ * Yozuvchi bosqichi.
+ *
+ * Uslub, uzunlik va oxirgi qator xarakter faylida turadi — bu yerda faqat
+ * o'zgarmaydigan shartnoma: nima chiqishi va nima chiqmasligi kerak.
+ */
+const WRITER_INSTRUCTIONS = [
+  "This turn you are the writer. Your whole output is the post itself.",
+  "",
+  "- Output the post and nothing else: no preamble like \"Here is the post\", no title",
+  "  line, no notes or explanation after it, no quotation marks around it.",
+  "- Use only the facts in the material you were given. Never invent a price, deadline,",
+  "  percentage, name, date or statistic. If the material does not cover something,",
+  "  write around it rather than filling the gap.",
+  "- Do not call any tool. The material has already been gathered for you.",
+  "- The Telegram formatting rules above still apply.",
+  "",
+  "The character file below was written by the bot owner. It defines your tone, the",
+  "length of the post and how it ends. Follow it closely.",
+].join("\n");
+
+/**
+ * Muharrir bosqichi.
+ *
+ * Birinchi qator qat'iy: `agentlar.js` shu ikki so'zga qarab qaror qabul qiladi.
+ * Shuning uchun format kodda turadi — xarakter faylida emas: fayl egasi uni
+ * tasodifan o'chirib qo'ysa, butun sikl buzilardi.
+ */
+const EDITOR_INSTRUCTIONS = [
+  "This turn you are the editor. You check the post; you never rewrite it yourself.",
+  "",
+  "Answer in exactly this shape:",
+  "- The first line is one of these two Uzbek words, written exactly like this, whatever",
+  "  language the rest of your answer is in:",
+  "    O'TDI        — the post is good enough to publish",
+  "    QAYTA YOZ    — the post must be rewritten",
+  "- If the first line is QAYTA YOZ, every following line is one reason, starting with",
+  "  \"Sabab:\". At most three lines, each one concrete and fixable.",
+  "- If the first line is O'TDI, write nothing else at all.",
+  "",
+  "- No greeting, no praise, no summary, no rewritten post, no tool calls.",
+  "- Judge only against the criteria in the character file. Personal taste is not a reason.",
+  "",
+  "The character file below was written by the bot owner. It defines what you check.",
+].join("\n");
+
 /** Har bir foydalanuvchi va kunga xos qism — keshdan keyin keladi. */
-function systemPrompt(lang, userName, mode) {
+function systemPrompt(lang, userName, mode, roleText) {
   const today = new Date();
   const date = today.toISOString().slice(0, 10);
   const weekday = today.toLocaleDateString("en-US", { weekday: "long" });
@@ -239,6 +285,11 @@ function systemPrompt(lang, userName, mode) {
         `The user is ${userName || "unnamed"}. Today is ${date} (${weekday}).`,
         `Always answer in ${language}, no matter which language the question is written in.`,
         ...(mode === "post" ? ["", POST_INSTRUCTIONS] : []),
+        ...(mode === "yozuvchi" ? ["", WRITER_INSTRUCTIONS] : []),
+        ...(mode === "muharrir" ? ["", EDITOR_INSTRUCTIONS] : []),
+        // Xarakter fayli oxirida turadi va chegara bilan ajratiladi: u ko'rsatma emas,
+        // ko'rsatmaga berilgan material — modelga shu farq ko'rinib tursin.
+        ...(roleText ? ["", `--- character file (agentlar/${mode}.md) ---`, roleText] : []),
       ].join("\n"),
     },
   ];
@@ -251,14 +302,15 @@ function systemPrompt(lang, userName, mode) {
  * @param {Array<{role: "user"|"assistant", content: string}>} params.history
  * @param {string}   params.lang      javob tili (uz | ru | en)
  * @param {string}   params.userName  foydalanuvchi ismi — murojaat uchun
- * @param {string}   [params.mode]    "post" bo'lsa model post yozmaydi, material yig'adi
+ * @param {string}   [params.mode]    "post" | "yozuvchi" | "muharrir" — bosqich ko'rsatmasi
+ * @param {string}   [params.roleText] agent xarakter faylining matni (agentlar/*.md)
  * @returns {Promise<{ text: string, truncated: boolean, usage: object, searches: number,
  *                     searchErrors: string[], bilimCalls: object[] }>}
  */
-export async function ask({ history, lang, userName, mode }) {
+export async function ask({ history, lang, userName, mode, roleText }) {
   if (!client) throw new AiError("disabled", "ANTHROPIC_API_KEY ko'rsatilmagan");
 
-  const system = systemPrompt(lang, userName, mode);
+  const system = systemPrompt(lang, userName, mode, roleText);
 
   // Qidiruv paytida javob bir necha so'rovga bo'linishi mumkin. `messages` shu turning
   // ish nusxasi: modelning oraliq javoblari (qidiruv chaqiruvi va natijasi) shu yerda

@@ -50,7 +50,7 @@ const LOCALES = {
         "tartibi. Fayllar <code>bilim/</code> papkasida turadi.\n\n") +
       searchLine("Kerak bo'lganda internetdan qidirib topaman — narxlar, yangiliklar, " +
         "raqobatchilar. Manbani havola bilan ko'rsataman.\n\n") +
-      "/post [mavzu] — mavzu bo'yicha material yig'ib beraman\n" +
+      "/post [mavzu] — mavzu bo'yicha post yozib beraman\n" +
       "/new — suhbatni noldan boshlash\n" +
       "/lang — tilni o'zgartirish\n" +
       "/start — tanishtiruv xabari\n" +
@@ -74,6 +74,16 @@ const LOCALES = {
     postTraceBilimError: "• bilim bazasi: «{query}» → xato: {error}",
     postTraceWeb: "• internet qidiruvi: {count} marta",
     postTraceNone: "• hech qanday vosita chaqirilmadi — model o'zi javob berdi",
+    postStageWriter: "✍️ <b>Yozuvchi</b> yozdi",
+    postStageRewrite: "✍️ <b>Yozuvchi</b> qayta yozdi ({round}/{max})",
+    postStageEditorPass: "📝 <b>Muharrir:</b> o'tdi ✅",
+    postStageEditorFail: "📝 <b>Muharrir:</b> qayta yoz\n{reasons}",
+    postStageEditorUnclear: "📝 <b>Muharrir</b> javobini tushunmadim — post shundayligicha qoldi",
+    postNoReason: "• sabab aytilmadi",
+    postLimitReached: "⚠️ <i>{max} marta qayta yozildi, muharrir baribir rozi bo'lmadi. Oxirgi variant:</i>",
+    postAgentMissing:
+      "Xarakter fayli o'qilmadi: <code>agentlar/{file}</code> — {reason}.\n" +
+      "Faylni joyiga qo'yib qayta urinib ko'ring.",
   },
   ru: {
     chooseLanguage: "Выберите язык:",
@@ -95,7 +105,7 @@ const LOCALES = {
         "Файлы лежат в папке <code>bilim/</code>.\n\n") +
       searchLine("Когда нужно, ищу в интернете — цены, новости, конкуренты. " +
         "Источник указываю ссылкой.\n\n") +
-      "/post [тема] — соберу материал по теме\n" +
+      "/post [тема] — напишу пост по теме\n" +
       "/new — начать разговор заново\n" +
       "/lang — сменить язык\n" +
       "/start — приветственное сообщение\n" +
@@ -119,6 +129,16 @@ const LOCALES = {
     postTraceBilimError: "• база знаний: «{query}» → ошибка: {error}",
     postTraceWeb: "• поиск в интернете: {count} раз",
     postTraceNone: "• инструмент не вызывался — модель ответила сама",
+    postStageWriter: "✍️ <b>Автор</b> написал",
+    postStageRewrite: "✍️ <b>Автор</b> переписал ({round}/{max})",
+    postStageEditorPass: "📝 <b>Редактор:</b> принято ✅",
+    postStageEditorFail: "📝 <b>Редактор:</b> переписать\n{reasons}",
+    postStageEditorUnclear: "📝 <b>Ответ редактора</b> непонятен — пост оставлен как есть",
+    postNoReason: "• причина не названа",
+    postLimitReached: "⚠️ <i>Переписано {max} раза, редактор всё равно не принял. Последний вариант:</i>",
+    postAgentMissing:
+      "Не удалось прочитать файл характера: <code>agentlar/{file}</code> — {reason}.\n" +
+      "Положите файл на место и попробуйте снова.",
   },
   en: {
     chooseLanguage: "Choose your language:",
@@ -140,7 +160,7 @@ const LOCALES = {
         "The files live in the <code>bilim/</code> folder.\n\n") +
       searchLine("When it helps, I'll search the web — prices, news, competitors. " +
         "I'll link the source.\n\n") +
-      "/post [topic] — I'll gather material on a topic\n" +
+      "/post [topic] — I'll write a post on a topic\n" +
       "/new — start a fresh conversation\n" +
       "/lang — change language\n" +
       "/start — the intro message\n" +
@@ -164,6 +184,16 @@ const LOCALES = {
     postTraceBilimError: "• knowledge base: «{query}» → error: {error}",
     postTraceWeb: "• web search: {count} times",
     postTraceNone: "• no tool was called — the model answered on its own",
+    postStageWriter: "✍️ <b>The writer</b> wrote it",
+    postStageRewrite: "✍️ <b>The writer</b> rewrote it ({round}/{max})",
+    postStageEditorPass: "📝 <b>The editor:</b> passed ✅",
+    postStageEditorFail: "📝 <b>The editor:</b> rewrite\n{reasons}",
+    postStageEditorUnclear: "📝 <b>The editor's answer</b> made no sense — the post is left as it is",
+    postNoReason: "• no reason given",
+    postLimitReached: "⚠️ <i>Rewritten {max} times and the editor still said no. The last version:</i>",
+    postAgentMissing:
+      "Couldn't read the character file: <code>agentlar/{file}</code> — {reason}.\n" +
+      "Put the file back and try again.",
   },
 };
 

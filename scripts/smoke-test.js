@@ -29,6 +29,12 @@ fs.writeFileSync(path.join(BILIM_DIR, "ichki", "kafolat.md"), "# Kafolat\n\nKafo
 fs.writeFileSync(path.join(BILIM_DIR, "README.md"), "# Qo'llanma\n\nBu fayl indekslanmasligi kerak.\n");
 fs.writeFileSync(path.join(BILIM_DIR, "rasm.png"), "png emas, lekin kengaytmasi mos emas");
 
+// Xarakter fayllari ham sinovga xos: loyihadagi `agentlar/` tahrirlansa sinov o'zgarmasin.
+const AGENTLAR_DIR = path.join(DATA_DIR, "agentlar");
+fs.mkdirSync(AGENTLAR_DIR, { recursive: true });
+fs.writeFileSync(path.join(AGENTLAR_DIR, "yozuvchi.md"), "# Yozuvchi\n\nDo'stona yoz, 10 qator.\n");
+fs.writeFileSync(path.join(AGENTLAR_DIR, "muharrir.md"), "# Muharrir\n\nUydirma faktni ushla.\n");
+
 const sent = []; // sendMessage / answerCallbackQuery chaqiruvlari
 
 const api = http.createServer((req, res) => {
@@ -127,6 +133,7 @@ const bot = spawn(process.execPath, ["bot.js"], {
     ANTHROPIC_BASE_URL: `http://127.0.0.1:${AI_PORT}`,
     AI_EFFORT: "low",
     BILIM_DIR,
+    AGENTLAR_DIR,
   },
   stdio: ["ignore", "pipe", "pipe"],
 });
@@ -179,13 +186,19 @@ async function postAi(update) {
   await waitFor(() => sent.some((c) => c.method === "sendMessage"));
 }
 
-/** `/post` ikki xabar yuboradi: avval vosita izi, keyin javob. Ikkalasini ham kutamiz. */
-async function postCommand(update) {
+/**
+ * `/post` oqimi bir necha xabar yuboradi: iz, bosqichlar va oxirida postning o'zi.
+ * Nechtasini kutish kerakligini chaqiruvchi aytadi — bosqichlar soni oqimga bog'liq.
+ */
+async function postCommand(update, expected) {
   sent.length = 0;
   aiRequests.length = 0;
   await post(update);
-  await waitFor(() => sent.filter((c) => c.method === "sendMessage").length >= 2);
+  await waitFor(() => sent.filter((c) => c.method === "sendMessage").length >= expected);
 }
+
+/** Yuborilgan hamma xabar bitta matnda — bosqich qatorlarini qidirish uchun. */
+const allText = () => sent.filter((c) => c.method === "sendMessage").map((c) => c.payload.text).join("\n");
 
 /** So'rovdagi tizim ko'rsatmasi (endi bloklar massivi) — matn bo'yicha qidirish uchun. */
 const systemText = (req) => JSON.stringify(req?.system ?? "");
@@ -371,7 +384,7 @@ check("noma'lum vosita is_error bilan qaytdi", aiRequests[1]?.messages?.at(-1)?.
 check("noma'lum vositadan keyin javob yetkazildi", lastText().includes("Baribir javob beraman"));
 
 // ---------------------------------------------------------------
-// 6h. /post — vositani sinash buyrug'i
+// 6h. /post — material -> yozuvchi -> muharrir oqimi
 // ---------------------------------------------------------------
 
 sent.length = 0;
@@ -383,28 +396,141 @@ await post(message(64, "/new"));
 aiQueue = [];
 await postAi(message(65, "salom"));
 
-aiQueue = [toolUse("landing narxi", "tu_6"), aiBody([{ type: "text", text: "Material yig'ildi." }])];
-await postCommand(message(66, "/post landing"));
-const trace = sent.filter((c) => c.method === "sendMessage").map((c) => c.payload.text).join("\n");
-check("/post vosita izini ko'rsatdi", trace.includes("The tool ran"));
-check("/post izda parcha soni bor", /knowledge base:.*passages/.test(trace));
-check("/post izda fayl nomi bor", trace.includes("narxlar.md"));
+// Oqim: material (vosita bilan) -> yozuvchi -> muharrir "o'tdi"
+aiQueue = [
+  toolUse("landing narxi", "tu_6"),
+  aiBody([{ type: "text", text: "Material yig'ildi: landing 5 000 000 so'm." }]),
+  aiBody([{ type: "text", text: "Landing kerakmi? 5 000 000 so'm. Qanday sayt kerak?" }]),
+  aiBody([{ type: "text", text: "O'TDI" }]),
+];
+// iz + yozuvchi + muharrir + post = 4 xabar
+await postCommand(message(66, "/post landing"), 4);
+
+check("/post vosita izini ko'rsatdi", allText().includes("The tool ran"));
+check("/post izda parcha soni bor", /knowledge base:.*passages/.test(allText()));
+check("/post izda fayl nomi bor", allText().includes("narxlar.md"));
 check("/post material yig'ish rejimida so'radi", systemText(aiRequests[0]).includes("material-gathering"));
 check("/post tarixni ishlatmadi", aiRequests[0]?.messages?.length === 1, `(${aiRequests[0]?.messages?.length})`);
+check("oqim uch bosqichdan o'tdi", aiRequests.length === 4, `(${aiRequests.length} ta so'rov)`);
+
+// Yozuvchi: 3-so'rov (material vosita tufayli ikkita so'rov bo'ldi)
+check("yozuvchi ko'rsatmasi yuborildi", systemText(aiRequests[2]).includes("you are the writer"));
+check(
+  "yozuvchining xarakter fayli yuborildi",
+  systemText(aiRequests[2]).includes("character file (agentlar/yozuvchi.md)") &&
+    systemText(aiRequests[2]).includes("Do'stona yoz"),
+);
+check(
+  "yozuvchiga material uzatildi",
+  String(aiRequests[2]?.messages?.[0]?.content ?? "").includes("Material yig'ildi"),
+);
+
+// Muharrir: 4-so'rov
+check("muharrir ko'rsatmasi yuborildi", systemText(aiRequests[3]).includes("you are the editor"));
+check(
+  "muharrirning xarakter fayli yuborildi",
+  systemText(aiRequests[3]).includes("character file (agentlar/muharrir.md)") &&
+    systemText(aiRequests[3]).includes("Uydirma faktni ushla"),
+);
+check(
+  "muharrirga post uzatildi",
+  String(aiRequests[3]?.messages?.[0]?.content ?? "").includes("Landing kerakmi"),
+);
+check("muharrir tarixsiz ishladi", aiRequests[3]?.messages?.length === 1, `(${aiRequests[3]?.messages?.length})`);
+
+check("bosqichlar ko'rsatildi", allText().includes("The writer") && allText().includes("passed"));
+check("post foydalanuvchiga yetkazildi", lastText().includes("Landing kerakmi"));
 
 // Keyingi oddiy savolda faqat oldingi almashuv + yangi savol ko'rinishi kerak (3 ta xabar).
-// /post ham savolini, ham javobini tarixga yozganda bu son 5 bo'lardi.
 aiQueue = [];
 await postAi(message(67, "yana savol"));
 check("/post tarixga yozilmadi", aiRequests[0]?.messages?.length === 3, `(${aiRequests[0]?.messages?.length})`);
 
 // Vosita chaqirilmasa, iz shuni aytadi
-aiQueue = [aiBody([{ type: "text", text: "Vositasiz javob." }])];
-sent.length = 0;
-await postCommand(message(68, "/post umumiy mavzu"));
+aiQueue = [
+  aiBody([{ type: "text", text: "Material yo'q." }]),
+  aiBody([{ type: "text", text: "Vositasiz post." }]),
+  aiBody([{ type: "text", text: "O'TDI" }]),
+];
+await postCommand(message(68, "/post umumiy mavzu"), 4);
+check("vosita chaqirilmagani izda ko'rindi", allText().includes("no tool was called"));
+
+// --- Muharrir "qayta yoz" desa, sabab yozuvchiga qaytadi ---
+aiQueue = [
+  aiBody([{ type: "text", text: "Material: kafolat 30 kun." }]),
+  aiBody([{ type: "text", text: "Birinchi variant." }]),
+  aiBody([{ type: "text", text: "QAYTA YOZ\nSabab: oxirida savol yo'q." }]),
+  aiBody([{ type: "text", text: "Ikkinchi variant. Sizda qanday?" }]),
+  aiBody([{ type: "text", text: "O'TDI" }]),
+];
+// iz + yozuvchi + muharrir + qayta yozdi + muharrir + post = 6 xabar
+await postCommand(message(69, "/post kafolat"), 6);
+
+check("qayta yozish bo'ldi", aiRequests.length === 5, `(${aiRequests.length} ta so'rov)`);
 check(
-  "vosita chaqirilmagani izda ko'rindi",
-  sent.map((c) => c.payload?.text ?? "").join("\n").includes("no tool was called"),
+  "muharrir sababi yozuvchiga uzatildi",
+  String(aiRequests[3]?.messages?.at(-1)?.content ?? "").includes("oxirida savol yo'q"),
+);
+check(
+  "yozuvchi oldingi variantini ko'rdi",
+  aiRequests[3]?.messages?.some((m) => m.role === "assistant" && m.content === "Birinchi variant."),
+);
+check("sabab foydalanuvchiga ko'rsatildi", allText().includes("oxirida savol yo'q"));
+check("qayta yozish bosqichi ko'rindi", allText().includes("rewrote it (1/2)"));
+check("oxirgi variant yetkazildi", lastText().includes("Ikkinchi variant"));
+
+// --- Muharrir hech rozi bo'lmasa: 2 qayta yozishdan keyin to'xtaydi ---
+const rewrite = () => aiBody([{ type: "text", text: "QAYTA YOZ\nSabab: hali ham qisqa." }]);
+aiQueue = [
+  aiBody([{ type: "text", text: "Material." }]),
+  aiBody([{ type: "text", text: "Variant bir." }]),
+  rewrite(),
+  aiBody([{ type: "text", text: "Variant ikki." }]),
+  rewrite(),
+  aiBody([{ type: "text", text: "Variant uch." }]),
+  rewrite(),
+];
+// iz + (yozuvchi + muharrir) x3 + ogohlantirish + post = 9 xabar
+await postCommand(message(70, "/post narx"), 9);
+
+check("ikkitadan ko'p qayta yozilmadi", aiRequests.length === 7, `(${aiRequests.length} ta so'rov)`);
+check("chegara haqida ogohlantirildi", allText().includes("Rewritten 2 times"));
+check("oxirgi variant baribir ko'rsatildi", lastText().includes("Variant uch"));
+
+// --- Muharrir javobi tushunarsiz bo'lsa: post shundayligicha chiqadi (fail-open) ---
+aiQueue = [
+  aiBody([{ type: "text", text: "Material." }]),
+  aiBody([{ type: "text", text: "Yaxshi post." }]),
+  aiBody([{ type: "text", text: "Menimcha yomon emas, lekin bilmadim." }]),
+];
+await postCommand(message(71, "/post tushunarsiz"), 4);
+check("tushunarsiz javobda qayta yozilmadi", aiRequests.length === 3, `(${aiRequests.length} ta so'rov)`);
+check("tushunarsiz javob izda aytildi", allText().includes("made no sense"));
+check("tushunarsiz javobda ham post yetkazildi", lastText().includes("Yaxshi post"));
+
+// --- Xarakter fayli yo'q bo'lsa: tushunarli xato, model chaqirilmaydi ---
+const writerFile = path.join(AGENTLAR_DIR, "yozuvchi.md");
+fs.renameSync(writerFile, `${writerFile}.bak`);
+sent.length = 0;
+aiRequests.length = 0;
+await post(message(72, "/post fayl yo'q"));
+await waitFor(() => sent.some((c) => c.method === "sendMessage"));
+check("yo'q fayl haqida xabar berildi", lastText().includes("Couldn't read the character file"));
+check("xabarda fayl nomi bor", lastText().includes("yozuvchi.md"));
+check("fayl yo'qligida model chaqirilmadi", aiRequests.length === 0, `(${aiRequests.length} ta so'rov)`);
+fs.renameSync(`${writerFile}.bak`, writerFile);
+
+// --- Xarakter fayli tahrirlansa restartsiz ko'rinadi (mtime) ---
+fs.writeFileSync(path.join(AGENTLAR_DIR, "muharrir.md"), "# Muharrir\n\nYangi mezon: sarlavha shart.\n");
+aiQueue = [
+  aiBody([{ type: "text", text: "Material." }]),
+  aiBody([{ type: "text", text: "Post." }]),
+  aiBody([{ type: "text", text: "O'TDI" }]),
+];
+await postCommand(message(73, "/post yangi mezon"), 4);
+check(
+  "tahrirlangan xarakter fayli restartsiz ishladi",
+  systemText(aiRequests[2]).includes("Yangi mezon: sarlavha shart"),
 );
 
 // 7. /help tanlangan tilda

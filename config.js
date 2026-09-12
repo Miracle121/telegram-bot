@@ -101,6 +101,18 @@ if (!Number.isInteger(bilimMaxResults) || bilimMaxResults < 1 || bilimMaxResults
   errors.push("BILIM_MAX_RESULTS 1 dan 10 gacha butun son bo'lishi kerak.");
 }
 
+// --- Agentlar ---
+// Yozuvchi va muharrirning xarakter fayllari shu papkada. Fayl yo'q bo'lsa bot
+// ishga tushaveradi: faqat `/post` tushunarli xato beradi.
+const agentlarDir = (process.env.AGENTLAR_DIR ?? "agentlar").trim();
+
+// Muharrir rozi bo'lmasa, yozuvchi shuncha marta qayta yozadi. Har qayta yozish —
+// ikkita qo'shimcha so'rov (yozuvchi + muharrir), ya'ni ikki barobar pul.
+const agentMaxRewrites = Number.parseInt(process.env.AGENT_MAX_REWRITES ?? "2", 10);
+if (!Number.isInteger(agentMaxRewrites) || agentMaxRewrites < 0 || agentMaxRewrites > 5) {
+  errors.push("AGENT_MAX_REWRITES 0 dan 5 gacha butun son bo'lishi kerak.");
+}
+
 const port = Number.parseInt(process.env.PORT ?? "3000", 10);
 if (!Number.isInteger(port) || port < 1 || port > 65535) {
   errors.push("PORT 1 dan 65535 gacha butun son bo'lishi kerak.");
@@ -134,5 +146,9 @@ export const config = Object.freeze({
   bilim: Object.freeze({
     dir: bilimDir,
     maxResults: bilimMaxResults,
+  }),
+  agentlar: Object.freeze({
+    dir: agentlarDir,
+    maxRewrites: agentMaxRewrites,
   }),
 });

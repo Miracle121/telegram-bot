@@ -13,6 +13,8 @@ bot.js                 kirish nuqtasi — server, webhook, xabarlarni qayta ishl
 ai.js                  Claude qatlami — ko'rsatma, vositalar, tool-loop, xatolarni tarjima qilish
 bilim.js               bilim bazasi — bilim/ dagi fayllarni o'qish va qidirish
 bilim/                 bilim bazasining o'zi (.md / .txt fayllar)
+agentlar.js            post oqimi — xarakter fayllarini o'qish, yozuvchi/muharrir sikli
+agentlar/              agentlarning xarakter fayllari (yozuvchi.md, muharrir.md)
 config.js              .env o'qish va tekshirish (xato bo'lsa ishga tushmaydi)
 telegram.js            Bot API klienti — timeout, qayta urinish, 429, uzun matnni bo'lish
 i18n.js                uz / ru / en matnlari va til tanlash klaviaturasi
@@ -241,19 +243,60 @@ vosita modelga umuman e'lon qilinmaydi.
 natija va bitta qo'shimcha so'rov qo'shadi — ya'ni bazadan qidirish internetdan
 qidirishdan o'nlab barobar arzon.
 
-### `/post [mavzu]` — vositani sinash
+## Agentlar — `/post [mavzu]`
 
-Model avval material yig'adi (bazadan, kerak bo'lsa internetdan), so'ng topilganini
-ko'rsatadi — post yozmaydi. Javobdan oldin vosita izi keladi:
+`/post` uchta bosqichdan o'tadi. Har bosqich alohida model chaqiruvi:
+
+```
+/post landing narxi
+   │
+   ├─ 1. material yig'ish   bilim_qidiruv + web_search
+   ├─ 2. YOZUVCHI           agentlar/yozuvchi.md ga qarab post yozadi
+   └─ 3. MUHARRIR           agentlar/muharrir.md ga qarab tekshiradi
+         ├─ o'tdi      → post yuboriladi
+         └─ qayta yoz  → sabab yozuvchiga qaytadi (maksimal 2 marta)
+```
+
+Foydalanuvchi oqimni ko'rib turadi — har bosqichdan keyin qisqa qator keladi:
 
 ```
 🔎 Vosita ishladi
 • bilim bazasi: «landing narxi» → 3 parcha — narxlar.md, xizmatlar.md
 • internet qidiruvi: 1 marta
+✍️ Yozuvchi yozdi
+📝 Muharrir: qayta yoz
+• postda "kafolat 60 kun" deyilgan, materialda 30 kun
+✍️ Yozuvchi qayta yozdi (1/2)
+📝 Muharrir: o'tdi ✅
 ```
 
-Iz javob tarkibidan quriladi, modelning gapidan emas — vosita rostdan chaqirilganini
-shundan bilasiz. `/post` suhbat tarixiga tegmaydi.
+Iz javob tarkibidan quriladi, modelning gapidan emas. `/post` suhbat tarixiga tegmaydi.
+
+### Xarakter fayllari
+
+| Fayl | Kim |
+|---|---|
+| `agentlar/yozuvchi.md` | uslub, uzunlik, oxirgi qator (savol yoki chaqiriq) |
+| `agentlar/muharrir.md` | nimani tekshirish: mavzu, uydirma fakt, ohang, uzunlik |
+
+Faylni tahrirlang va saqlang — **restart kerak emas**, keyingi `/post` yangi matn bilan
+ishlaydi (`mtime` kuzatiladi). Fayl yo'q bo'lsa bot ishlayveradi, faqat `/post`
+tushunarli xato beradi va model umuman chaqirilmaydi.
+
+**Format kodda turadi.** Muharrirning javobi qat'iy: birinchi qator `O'TDI` yoki
+`QAYTA YOZ`, keyin `Sabab:` qatorlari. Buni `ai.js` talab qiladi, xarakter fayli emas —
+fayl egasi formatni tasodifan o'chirib qo'ysa ham sikl buzilmaydi. Javob tushunib
+bo'lmasa oqim to'xtaydi va post shundayligicha ko'rsatiladi (fail-open).
+
+```
+AGENTLAR_DIR=agentlar      # papka yo'li
+AGENT_MAX_REWRITES=2       # muharrir rozi bo'lmasa nechta qayta yozish (0-5)
+```
+
+**Xarajat.** Eng yaxshi holatda 3 ta chaqiruv (material + yozuvchi + muharrir), eng
+yomonida 7 ta. Qidiruvli material bosqichi eng qimmati — taxminan $0.26, qolgan
+bosqichlar ~$0.02 dan. `AGENT_MAX_REWRITES=0` qo'yilsa muharrir baribir tekshiradi,
+lekin qayta yozish bo'lmaydi.
 
 ## Keyingi qadam
 
