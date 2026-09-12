@@ -1,11 +1,16 @@
 // Matnlar va til bilan ishlash.
 // Yangi til qo'shish uchun LOCALES ga yangi kalit qo'shish yetarli.
 
+import * as bilim from "./bilim.js";
 import { config } from "./config.js";
 
 // /help dagi qidiruv haqidagi qator faqat qidiruv yoqilgan bo'lsa ko'rinadi:
 // AI_WEB_SEARCH=off bo'lganda bot qila olmaydigan ishni va'da qilmasin.
 const searchLine = (text) => (config.ai.webSearch ? text : "");
+
+// Xuddi shu qoida bilim bazasiga ham tegishli: baza bo'sh bo'lsa vosita e'lon
+// qilinmaydi, demak /help da ham va'da qilinmasin.
+const bilimLine = (text) => (config.ai.enabled && bilim.stats().chunks > 0 ? text : "");
 
 export const LANGUAGES = {
   uz: { flag: "🇺🇿", label: "O'zbekcha" },
@@ -41,8 +46,11 @@ const LOCALES = {
       "Shunchaki savolingizni yoki vazifangizni yozing — javob beraman. " +
       "Oldingi xabarlaringizni eslab turaman, shuning uchun «buni qisqartir» deb " +
       "davom ettirsangiz ham tushunaman.\n\n" +
+      bilimLine("Sizning bilim bazangizdan qidira olaman — xizmatlar, narxlar, ish " +
+        "tartibi. Fayllar <code>bilim/</code> papkasida turadi.\n\n") +
       searchLine("Kerak bo'lganda internetdan qidirib topaman — narxlar, yangiliklar, " +
         "raqobatchilar. Manbani havola bilan ko'rsataman.\n\n") +
+      "/post [mavzu] — mavzu bo'yicha material yig'ib beraman\n" +
       "/new — suhbatni noldan boshlash\n" +
       "/lang — tilni o'zgartirish\n" +
       "/start — tanishtiruv xabari\n" +
@@ -60,6 +68,12 @@ const LOCALES = {
     aiEmpty: "Javob bo'sh chiqdi. Savolni boshqacha ifodalab ko'ring.",
     aiUnknown: "AI bilan bog'lanishda muammo bo'ldi. Birozdan so'ng qayta urinib ko'ring.",
     aiTruncated: "\n\n<i>(javob uzun bo'lgani uchun kesildi — davomini so'rang)</i>",
+    postUsage: "Mavzuni ham yozing. Masalan: <code>/post narxlar</code>",
+    postTraceTitle: "🔎 <b>Vosita ishladi</b>",
+    postTraceBilim: "• bilim bazasi: «{query}» → {chunks} parcha{files}",
+    postTraceBilimError: "• bilim bazasi: «{query}» → xato: {error}",
+    postTraceWeb: "• internet qidiruvi: {count} marta",
+    postTraceNone: "• hech qanday vosita chaqirilmadi — model o'zi javob berdi",
   },
   ru: {
     chooseLanguage: "Выберите язык:",
@@ -77,8 +91,11 @@ const LOCALES = {
       "<b>Помощь</b>\n\n" +
       "Просто напишите вопрос или задачу — я отвечу. " +
       "Я помню предыдущие сообщения, поэтому можно продолжать: «сократи это».\n\n" +
+      bilimLine("Могу искать в вашей базе знаний — услуги, цены, порядок работы. " +
+        "Файлы лежат в папке <code>bilim/</code>.\n\n") +
       searchLine("Когда нужно, ищу в интернете — цены, новости, конкуренты. " +
         "Источник указываю ссылкой.\n\n") +
+      "/post [тема] — соберу материал по теме\n" +
       "/new — начать разговор заново\n" +
       "/lang — сменить язык\n" +
       "/start — приветственное сообщение\n" +
@@ -96,6 +113,12 @@ const LOCALES = {
     aiEmpty: "Ответ получился пустым. Попробуйте переформулировать вопрос.",
     aiUnknown: "Не удалось связаться с ИИ. Попробуйте чуть позже.",
     aiTruncated: "\n\n<i>(ответ обрезан из-за длины — попросите продолжение)</i>",
+    postUsage: "Укажите тему. Например: <code>/post цены</code>",
+    postTraceTitle: "🔎 <b>Инструмент сработал</b>",
+    postTraceBilim: "• база знаний: «{query}» → фрагментов: {chunks}{files}",
+    postTraceBilimError: "• база знаний: «{query}» → ошибка: {error}",
+    postTraceWeb: "• поиск в интернете: {count} раз",
+    postTraceNone: "• инструмент не вызывался — модель ответила сама",
   },
   en: {
     chooseLanguage: "Choose your language:",
@@ -113,8 +136,11 @@ const LOCALES = {
       "<b>Help</b>\n\n" +
       "Just write your question or task and I'll answer. " +
       "I remember earlier messages, so you can follow up with «make it shorter».\n\n" +
+      bilimLine("I can search your own knowledge base — services, prices, how you work. " +
+        "The files live in the <code>bilim/</code> folder.\n\n") +
       searchLine("When it helps, I'll search the web — prices, news, competitors. " +
         "I'll link the source.\n\n") +
+      "/post [topic] — I'll gather material on a topic\n" +
       "/new — start a fresh conversation\n" +
       "/lang — change language\n" +
       "/start — the intro message\n" +
@@ -132,6 +158,12 @@ const LOCALES = {
     aiEmpty: "The answer came back empty. Try rephrasing the question.",
     aiUnknown: "Couldn't reach the AI. Please try again shortly.",
     aiTruncated: "\n\n<i>(answer cut off — ask me to continue)</i>",
+    postUsage: "Add a topic too. For example: <code>/post prices</code>",
+    postTraceTitle: "🔎 <b>The tool ran</b>",
+    postTraceBilim: "• knowledge base: «{query}» → {chunks} passages{files}",
+    postTraceBilimError: "• knowledge base: «{query}» → error: {error}",
+    postTraceWeb: "• web search: {count} times",
+    postTraceNone: "• no tool was called — the model answered on its own",
   },
 };
 

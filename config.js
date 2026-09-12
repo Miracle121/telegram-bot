@@ -90,6 +90,17 @@ if (!Number.isInteger(aiWebSearchMaxUses) || aiWebSearchMaxUses < 1 || aiWebSear
   errors.push("AI_WEB_SEARCH_MAX_USES 1 dan 20 gacha butun son bo'lishi kerak.");
 }
 
+// --- Bilim bazasi ---
+// Model shu papkadagi fayllardan qidiradi. Papka bo'sh yoki yo'q bo'lsa xato emas:
+// vosita shunchaki e'lon qilinmaydi va bot avvalgidek ishlayveradi.
+const bilimDir = (process.env.BILIM_DIR ?? "bilim").trim();
+
+// Bitta qidiruvda modelga nechta parcha beriladi. Har parcha kirish tokeni, ya'ni pul.
+const bilimMaxResults = Number.parseInt(process.env.BILIM_MAX_RESULTS ?? "4", 10);
+if (!Number.isInteger(bilimMaxResults) || bilimMaxResults < 1 || bilimMaxResults > 10) {
+  errors.push("BILIM_MAX_RESULTS 1 dan 10 gacha butun son bo'lishi kerak.");
+}
+
 const port = Number.parseInt(process.env.PORT ?? "3000", 10);
 if (!Number.isInteger(port) || port < 1 || port > 65535) {
   errors.push("PORT 1 dan 65535 gacha butun son bo'lishi kerak.");
@@ -119,5 +130,9 @@ export const config = Object.freeze({
     timeoutMs: aiTimeoutMs,
     webSearch: aiWebSearch === "on",
     webSearchMaxUses: aiWebSearchMaxUses,
+  }),
+  bilim: Object.freeze({
+    dir: bilimDir,
+    maxResults: bilimMaxResults,
   }),
 });

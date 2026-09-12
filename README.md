@@ -10,7 +10,9 @@ Suhbat eslab qolinadi, `/new` bilan noldan boshlanadi.
 
 ```
 bot.js                 kirish nuqtasi — server, webhook, xabarlarni qayta ishlash
-ai.js                  Claude qatlami — ko'rsatma, veb qidiruv, so'rov, xatolarni tarjima qilish
+ai.js                  Claude qatlami — ko'rsatma, vositalar, tool-loop, xatolarni tarjima qilish
+bilim.js               bilim bazasi — bilim/ dagi fayllarni o'qish va qidirish
+bilim/                 bilim bazasining o'zi (.md / .txt fayllar)
 config.js              .env o'qish va tekshirish (xato bo'lsa ishga tushmaydi)
 telegram.js            Bot API klienti — timeout, qayta urinish, 429, uzun matnni bo'lish
 i18n.js                uz / ru / en matnlari va til tanlash klaviaturasi
@@ -211,6 +213,47 @@ kelgan so'rovlar uni 10 barobar arzon o'qiydi (kesh 5 daqiqa yashaydi). Qidiruvl
 esa baribir qimmat — natijalar modelga kirish tokeni bo'lib qaytadi.
 
 `npm run ai:test "savol"` javob ostida qidiruv sonini va kesh hisobini ko'rsatadi.
+
+## Bilim bazasi
+
+`bilim/` papkasidagi `.md` va `.txt` fayllar model uchun ochiq: savol shu biznes haqida
+bo'lsa (narx, muddat, ish tartibi, kafolat) model `bilim_qidiruv` vositasini chaqiradi va
+javobni o'sha fayllardan quradi.
+
+```
+BILIM_DIR=bilim          # papka yo'li
+BILIM_MAX_RESULTS=4      # bitta qidiruvda nechta parcha beriladi (1-10)
+```
+
+Format va qoidalar — `bilim/README.md` da. Qisqasi:
+
+- fayl `##` sarlavhalari bo'yicha parchalarga bo'linadi; modelga butun fayl emas, faqat
+  mos kelgan parcha beriladi, shuning uchun har bo'lim o'zicha tushunarli bo'lsin
+- sarlavhadagi so'z gavdadagidan uch barobar og'ir baholanadi
+- ichki papkalar ham o'qiladi (3 qavatgacha), `README.md` esa indekslanmaydi
+- **repo public** — bu papkaga maxfiy ma'lumot yozilmasin
+
+Fayllarni tahrirlash uchun restart shart emas — bot `mtime` ni kuzatib, o'zgarganini
+qayta o'qiydi. Faqat **birinchi** fayl qo'shilganda restart kerak: baza bo'sh bo'lsa
+vosita modelga umuman e'lon qilinmaydi.
+
+**Xarajat.** Vosita ta'rifi ~250 token (keshlanadi), har chaqiruv esa ~1200 tokengacha
+natija va bitta qo'shimcha so'rov qo'shadi — ya'ni bazadan qidirish internetdan
+qidirishdan o'nlab barobar arzon.
+
+### `/post [mavzu]` — vositani sinash
+
+Model avval material yig'adi (bazadan, kerak bo'lsa internetdan), so'ng topilganini
+ko'rsatadi — post yozmaydi. Javobdan oldin vosita izi keladi:
+
+```
+🔎 Vosita ishladi
+• bilim bazasi: «landing narxi» → 3 parcha — narxlar.md, xizmatlar.md
+• internet qidiruvi: 1 marta
+```
+
+Iz javob tarkibidan quriladi, modelning gapidan emas — vosita rostdan chaqirilganini
+shundan bilasiz. `/post` suhbat tarixiga tegmaydi.
 
 ## Keyingi qadam
 

@@ -11,6 +11,7 @@ import { config } from "./config.js";
 import * as tg from "./telegram.js";
 import * as store from "./store.js";
 import * as ai from "./ai.js";
+import * as bilim from "./bilim.js";
 import {
   aiErrorText,
   chooseLanguagePrompt,
@@ -113,6 +114,17 @@ async function handleMessage(message) {
       await tg.sendMessage(chatId, t(lang, "chooseLanguage"), { reply_markup: languageKeyboard() });
       return;
 
+    case "post": {
+      // "/post mavzu" — buyruqdan keyingi hamma narsa mavzu
+      const topic = text.slice(command.length + 1).trim();
+      if (!topic) {
+        await tg.sendMessage(chatId, t(lang, "postUsage"));
+        return;
+      }
+      await handlePost(chatId, user, lang, topic);
+      return;
+    }
+
     default:
       await tg.sendMessage(chatId, t(lang, "unknownCommand"));
   }
@@ -183,6 +195,96 @@ async function handleAiMessage(chatId, user, lang, text) {
     stopTyping();
     busyUsers.delete(user.id);
   }
+}
+
+// ---------------------------------------------------------------
+// /post — vositani sinash uchun
+// ---------------------------------------------------------------
+
+/**
+ * Mavzu bo'yicha material yig'adi va topilganini ko'rsatadi (post yozmaydi).
+ *
+ * Oddiy suhbatdan ikki farqi bor:
+ *  - tarix ishlatilmaydi ham, yozilmaydi ham — bu sinov, suhbat toza qolsin
+ *  - javobdan oldin vosita izi yuboriladi: model nima desa ham, vosita rostdan
+ *    chaqirilgani va nima topilgani shu yerdan ko'rinadi
+ */
+async function handlePost(chatId, user, lang, topic) {
+  if (!ai.enabled) {
+    await tg.sendMessage(chatId, t(lang, "aiDisabled"));
+    return;
+  }
+
+  if (busyUsers.has(user.id)) {
+    await tg.sendMessage(chatId, t(lang, "aiBusy"));
+    return;
+  }
+
+  busyUsers.add(user.id);
+  const stopTyping = keepTyping(chatId);
+  const startedAt = Date.now();
+
+  try {
+    const answer = await ai.ask({
+      history: [{ role: "user", content: topic }],
+      lang,
+      userName: user.first_name ?? "",
+      mode: "post",
+    });
+
+    await tg.sendRichText(chatId, toolTrace(lang, answer));
+    await tg.sendRichText(chatId, answer.text + (answer.truncated ? t(lang, "aiTruncated") : ""));
+
+    log.info("post materiali yig'ildi", {
+      userId: user.id,
+      durationMs: Date.now() - startedAt,
+      topic,
+      bilimCalls: answer.bilimCalls,
+      searches: answer.searches,
+      inputTokens: answer.usage.input_tokens,
+      outputTokens: answer.usage.output_tokens,
+      ...(answer.searchErrors.length > 0 ? { searchErrors: answer.searchErrors } : {}),
+    });
+  } catch (error) {
+    if (!(error instanceof ai.AiError)) throw error;
+
+    log.error("post xatosi", { userId: user.id, code: error.code, error: error.message });
+    await tg.sendMessage(chatId, aiErrorText(lang, error.code));
+  } finally {
+    stopTyping();
+    busyUsers.delete(user.id);
+  }
+}
+
+/** Qaysi vosita chaqirilgani va nima topilgani — modeldan emas, javob tarkibidan olinadi. */
+function toolTrace(lang, answer) {
+  const lines = [t(lang, "postTraceTitle")];
+
+  for (const call of answer.bilimCalls) {
+    if (call.error) {
+      lines.push(t(lang, "postTraceBilimError", {
+        query: tg.escapeHtml(call.query),
+        error: tg.escapeHtml(call.error),
+      }));
+      continue;
+    }
+    lines.push(t(lang, "postTraceBilim", {
+      query: tg.escapeHtml(call.query),
+      chunks: String(call.chunks),
+      files: call.files.length > 0 ? ` — ${tg.escapeHtml(call.files.join(", "))}` : "",
+    }));
+  }
+
+  if (answer.searches > 0) {
+    lines.push(t(lang, "postTraceWeb", { count: String(answer.searches) }));
+  }
+
+  // Hech qanday vosita chaqirilmagani ham natija: model o'zi shunday qaror qilgan.
+  if (answer.bilimCalls.length === 0 && answer.searches === 0) {
+    lines.push(t(lang, "postTraceNone"));
+  }
+
+  return lines.join("\n");
 }
 
 async function handleCallbackQuery(query) {
@@ -308,6 +410,10 @@ async function start() {
 
   if (!ai.enabled) {
     log.warn("ANTHROPIC_API_KEY yo'q — AI suhbati o'chiq, bot faqat buyruqlarga javob beradi");
+  } else if (ai.knowledgeBase) {
+    log.info("bilim bazasi o'qildi", { dir: config.bilim.dir, ...bilim.stats() });
+  } else {
+    log.warn(`bilim bazasi bo'sh (${config.bilim.dir}/) — qidiruv vositasi e'lon qilinmadi`);
   }
 
   if (config.webhookUrl) {

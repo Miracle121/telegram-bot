@@ -16,6 +16,19 @@ const BOT_PORT = 3991;
 const SECRET = "test_secret_0123456789abcdef";
 const DATA_DIR = fs.mkdtempSync(path.join(os.tmpdir(), "bot-smoke-"));
 
+// Sinov o'z bilim bazasi bilan ishlaydi: loyihadagi `bilim/` o'zgarsa ham natija
+// o'zgarmasin. README indekslanmasligi ham shu yerda tekshiriladi.
+const BILIM_DIR = path.join(DATA_DIR, "bilim");
+fs.mkdirSync(path.join(BILIM_DIR, "ichki"), { recursive: true });
+fs.writeFileSync(
+  path.join(BILIM_DIR, "narxlar.md"),
+  "# Narxlar\n\n## Landing\n\nLanding sayt narxi 5 000 000 so'm, muddati 4-6 kun.\n\n" +
+    "## Bot\n\nOddiy bot 6 000 000 so'm.\n",
+);
+fs.writeFileSync(path.join(BILIM_DIR, "ichki", "kafolat.md"), "# Kafolat\n\nKafolat muddati 30 kun.\n");
+fs.writeFileSync(path.join(BILIM_DIR, "README.md"), "# Qo'llanma\n\nBu fayl indekslanmasligi kerak.\n");
+fs.writeFileSync(path.join(BILIM_DIR, "rasm.png"), "png emas, lekin kengaytmasi mos emas");
+
 const sent = []; // sendMessage / answerCallbackQuery chaqiruvlari
 
 const api = http.createServer((req, res) => {
@@ -113,6 +126,7 @@ const bot = spawn(process.execPath, ["bot.js"], {
     ANTHROPIC_API_KEY: "sk-ant-smoke-test-0123456789",
     ANTHROPIC_BASE_URL: `http://127.0.0.1:${AI_PORT}`,
     AI_EFFORT: "low",
+    BILIM_DIR,
   },
   stdio: ["ignore", "pipe", "pipe"],
 });
@@ -163,6 +177,14 @@ async function postAi(update) {
   aiRequests.length = 0;
   await post(update);
   await waitFor(() => sent.some((c) => c.method === "sendMessage"));
+}
+
+/** `/post` ikki xabar yuboradi: avval vosita izi, keyin javob. Ikkalasini ham kutamiz. */
+async function postCommand(update) {
+  sent.length = 0;
+  aiRequests.length = 0;
+  await post(update);
+  await waitFor(() => sent.filter((c) => c.method === "sendMessage").length >= 2);
 }
 
 /** So'rovdagi tizim ko'rsatmasi (endi bloklar massivi) — matn bo'yicha qidirish uchun. */
@@ -241,8 +263,9 @@ aiResponse = { status: 200, text: "Bugungi reja tayyor." };
 
 // 6d. Veb qidiruv asbobi so'rovga qo'shiladi
 await postAi(message(55, "dollar kursi qancha"));
-check("qidiruv asbobi e'lon qilindi", aiRequests[0]?.tools?.[0]?.type === "web_search_20260209");
-check("qidiruv chegarasi berildi", aiRequests[0]?.tools?.[0]?.max_uses === 5, `(${aiRequests[0]?.tools?.[0]?.max_uses})`);
+const webTool = aiRequests[0]?.tools?.find((tool) => tool.type === "web_search_20260209");
+check("qidiruv asbobi e'lon qilindi", Boolean(webTool));
+check("qidiruv chegarasi berildi", webTool?.max_uses === 5, `(${webTool?.max_uses})`);
 check("qidiruv qoidasi ko'rsatmaga qo'shildi", systemText(aiRequests[0]).includes("Web search:"));
 check(
   "o'zgarmas qism keshlanadi, o'zgaruvchani keyin keladi",
@@ -278,6 +301,111 @@ aiQueue = [
 await postAi(message(57, "yana qidir"));
 check("qidiruv xatosi javobni buzmadi", lastText().includes("Hozir topa olmadim"));
 check("qidiruv xatosi loglandi", botLog.join("").includes("max_uses_exceeded"));
+
+// ---------------------------------------------------------------
+// 6g. Bilim bazasi vositasi — bizning tool-loop
+// ---------------------------------------------------------------
+
+const bilimTool = aiRequests[0]?.tools?.find((tool) => tool.name === "bilim_qidiruv");
+check("bilim vositasi e'lon qilindi", Boolean(bilimTool));
+check(
+  "vositaga tavsif berildi",
+  (bilimTool?.description?.length ?? 0) > 200 && bilimTool.description.includes("knowledge base"),
+);
+check("vosita query maydonini so'raydi", bilimTool?.input_schema?.required?.[0] === "query");
+check("bilim qoidasi ko'rsatmaga qo'shildi", systemText(aiRequests[0]).includes("Knowledge base:"));
+
+/** Modelning vosita chaqirig'i — `tool_use` bilan to'xtaydi. */
+const toolUse = (query, id = "tu_1") =>
+  aiBody([{ type: "tool_use", id, name: "bilim_qidiruv", input: { query } }], "tool_use");
+
+aiQueue = [toolUse("landing narxi"), aiBody([{ type: "text", text: "Landing — 5 000 000 so'm." }])];
+await postAi(message(58, "landing qancha turadi"));
+
+const toolResult = aiRequests[1]?.messages?.at(-1);
+check("tool_use ga javob qaytarildi", aiRequests.length === 2, `(${aiRequests.length} ta so'rov)`);
+check("chaqiruv modelga qaytarildi", aiRequests[1]?.messages?.at(-2)?.role === "assistant");
+check("tool_result yuborildi", toolResult?.content?.[0]?.type === "tool_result");
+check("tool_use_id mos keldi", toolResult?.content?.[0]?.tool_use_id === "tu_1");
+check(
+  "topilgan matn natijaga tushdi",
+  String(toolResult?.content?.[0]?.content ?? "").includes("5 000 000"),
+);
+check(
+  "natijada fayl nomi ko'rsatildi",
+  String(toolResult?.content?.[0]?.content ?? "").includes("narxlar.md"),
+);
+check("vosita chaqirilgandan keyin javob yetkazildi", lastText().includes("5 000 000"));
+
+// Ichki papka ham o'qiladi, README esa yo'q
+aiQueue = [toolUse("kafolat muddati", "tu_2"), aiBody([{ type: "text", text: "30 kun." }])];
+await postAi(message(59, "kafolat qancha"));
+check(
+  "ichki papkadagi fayl topildi",
+  String(aiRequests[1]?.messages?.at(-1)?.content?.[0]?.content ?? "").includes("30 kun"),
+);
+
+aiQueue = [toolUse("qo'llanma indekslanmasligi", "tu_3"), aiBody([{ type: "text", text: "Topilmadi." }])];
+await postAi(message(60, "qo'llanma bormi"));
+check(
+  "README indekslanmadi",
+  !String(aiRequests[1]?.messages?.at(-1)?.content?.[0]?.content ?? "").includes("indekslanmasligi kerak"),
+);
+
+// Bazada yo'q mavzu — javob buzilmaydi
+aiQueue = [toolUse("kosmik kema", "tu_4"), aiBody([{ type: "text", text: "Bazada yo'q ekan." }])];
+await postAi(message(61, "kosmik kema"));
+check(
+  "topilmaganda tushunarli javob qaytdi",
+  String(aiRequests[1]?.messages?.at(-1)?.content?.[0]?.content ?? "").includes("topilmadi"),
+);
+check("topilmaganda ham javob yetkazildi", lastText().includes("Bazada yo'q ekan"));
+
+// Noma'lum vosita — exception emas, is_error
+aiQueue = [
+  aiBody([{ type: "tool_use", id: "tu_5", name: "yoq_vosita", input: {} }], "tool_use"),
+  aiBody([{ type: "text", text: "Baribir javob beraman." }]),
+];
+await postAi(message(62, "noma'lum vosita"));
+check("noma'lum vosita is_error bilan qaytdi", aiRequests[1]?.messages?.at(-1)?.content?.[0]?.is_error === true);
+check("noma'lum vositadan keyin javob yetkazildi", lastText().includes("Baribir javob beraman"));
+
+// ---------------------------------------------------------------
+// 6h. /post — vositani sinash buyrug'i
+// ---------------------------------------------------------------
+
+sent.length = 0;
+await post(message(63, "/post"));
+check("mavzusiz /post yo'riqnoma berdi", lastText().includes("/post prices"));
+
+// Tarixni tozalab, bitta oddiy almashuv qilamiz — /post unga tegmasligi shunda ko'rinadi
+await post(message(64, "/new"));
+aiQueue = [];
+await postAi(message(65, "salom"));
+
+aiQueue = [toolUse("landing narxi", "tu_6"), aiBody([{ type: "text", text: "Material yig'ildi." }])];
+await postCommand(message(66, "/post landing"));
+const trace = sent.filter((c) => c.method === "sendMessage").map((c) => c.payload.text).join("\n");
+check("/post vosita izini ko'rsatdi", trace.includes("The tool ran"));
+check("/post izda parcha soni bor", /knowledge base:.*passages/.test(trace));
+check("/post izda fayl nomi bor", trace.includes("narxlar.md"));
+check("/post material yig'ish rejimida so'radi", systemText(aiRequests[0]).includes("material-gathering"));
+check("/post tarixni ishlatmadi", aiRequests[0]?.messages?.length === 1, `(${aiRequests[0]?.messages?.length})`);
+
+// Keyingi oddiy savolda faqat oldingi almashuv + yangi savol ko'rinishi kerak (3 ta xabar).
+// /post ham savolini, ham javobini tarixga yozganda bu son 5 bo'lardi.
+aiQueue = [];
+await postAi(message(67, "yana savol"));
+check("/post tarixga yozilmadi", aiRequests[0]?.messages?.length === 3, `(${aiRequests[0]?.messages?.length})`);
+
+// Vosita chaqirilmasa, iz shuni aytadi
+aiQueue = [aiBody([{ type: "text", text: "Vositasiz javob." }])];
+sent.length = 0;
+await postCommand(message(68, "/post umumiy mavzu"));
+check(
+  "vosita chaqirilmagani izda ko'rindi",
+  sent.map((c) => c.payload?.text ?? "").join("\n").includes("no tool was called"),
+);
 
 // 7. /help tanlangan tilda
 sent.length = 0;

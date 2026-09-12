@@ -6,6 +6,7 @@
 
 import Anthropic from "@anthropic-ai/sdk";
 
+import * as bilim from "./bilim.js";
 import { config } from "./config.js";
 import { LANGUAGE_NAMES } from "./i18n.js";
 
@@ -21,10 +22,64 @@ const WEB_SEARCH_TOOL = {
   max_uses: config.ai.webSearchMaxUses,
 };
 
-const TOOLS = config.ai.webSearch ? [WEB_SEARCH_TOOL] : undefined;
+// Bizning o'z vositamiz: chaqiruvni model qiladi, bajarishni biz. Tavsif — vositaning
+// eng muhim qismi: model faqat shu matnga qarab qachon chaqirishni hal qiladi.
+// Ingliz tilida, chunki model ko'rsatmani shu tilda eng aniq bajaradi.
+const BILIM_TOOL = {
+  name: "bilim_qidiruv",
+  description: [
+    "Search the owner's own knowledge base: the notes and documents this business keeps",
+    "about itself — services offered, prices, working hours, order and payment procedure,",
+    "warranty terms, past decisions, answers to common customer questions.",
+    "",
+    "Use it whenever the question is about THIS business specifically: what we sell, what",
+    "we charge, how long something takes, how we work, what was agreed before. Neither you",
+    "nor the internet knows any of that — only these files do. Search before answering, so",
+    "the answer is the owner's real answer and not a plausible-sounding guess.",
+    "",
+    "Do not use it for general knowledge, news, or prices outside this business — that is",
+    "what web_search is for. Do not use it for pure writing, reasoning or planning tasks.",
+    "",
+    "It returns the matching passages with the file and section they came from. If it",
+    "returns nothing, say plainly that the knowledge base does not cover it. Never invent",
+    "a price, a deadline or a rule that the passages do not state.",
+  ].join("\n"),
+  input_schema: {
+    type: "object",
+    properties: {
+      query: {
+        type: "string",
+        description:
+          "Key words to look for, in the user's own language. Content words only, no full" +
+          " sentence: \"landing price\" rather than \"how much does a landing page cost\".",
+      },
+    },
+    required: ["query"],
+  },
+};
 
-// Qidiruv paytida model `pause_turn` bilan to'xtab, davom ettirishni so'rashi mumkin.
-// Sikl cheksiz bo'lmasligi uchun chegara: har bir aylanish alohida so'rov, ya'ni pul.
+// Vositalar ro'yxati modul yuklanganda bir marta hisoblanadi va keyin o'zgarmaydi.
+// Sabab — prompt-kesh: kesh prefiks bo'yicha ishlaydi, tartib esa `tools -> system ->
+// messages`. Ro'yxat so'rovdan so'rovga o'zgarsa, har safar butun kesh kuyib ketardi.
+//
+// Yon ta'siri: baza butunlay bo'sh bo'lsa vosita e'lon qilinmaydi (bo'sh bazani qidirish
+// faqat token sarflaydi), shuning uchun `bilim/` ga *birinchi* fayl qo'shilgandan keyin
+// bot qayta ishga tushirilishi kerak. Keyingi o'zgarishlar restartsiz ko'rinadi.
+const bilimReady = config.ai.enabled && bilim.stats().chunks > 0;
+
+const TOOL_LIST = [
+  ...(bilimReady ? [BILIM_TOOL] : []),
+  ...(config.ai.webSearch ? [WEB_SEARCH_TOOL] : []),
+];
+
+const TOOLS = TOOL_LIST.length > 0 ? TOOL_LIST : undefined;
+
+/** Bazadan qidirish mumkinmi — start logi va `/help` matni uchun. */
+export const knowledgeBase = bilimReady;
+
+// Qidiruv paytida model `pause_turn` bilan to'xtab, davom ettirishni so'rashi mumkin;
+// o'z vositamizni chaqirsa esa `tool_use` bilan to'xtaydi. Ikkalasi ham siklni davom
+// ettiradi, shuning uchun chegara umumiy: har bir aylanish alohida so'rov, ya'ni pul.
 const MAX_TURNS = 6;
 
 /** AI sozlanganmi. Kalit bo'lmasa bot baribir ishlaydi, faqat suhbat qismi o'chiq bo'ladi. */
@@ -90,10 +145,36 @@ const STABLE_SYSTEM = [
   "  Never answer with generic advice that would fit any business.",
   "- Ask a clarifying question only when the answer would be useless without it.",
   "  Otherwise make a reasonable assumption and state it in one line.",
-  config.ai.webSearch
-    ? "- If you cannot do something (cannot read files, cannot send email or create files yet), say so in one line and offer what you can do instead."
-    : "- If you cannot do something (no internet access, cannot read files, cannot send email or create files yet), say so in one line and offer what you can do instead.",
+  // Chegaralar ro'yxati yoqilgan vositalarga qarab yig'iladi: model o'zi qila oladigan
+  // ishni "qila olmayman" deb aytmasin va aksincha.
+  `- If you cannot do something (${[
+    ...(config.ai.webSearch ? [] : ["no internet access"]),
+    ...(bilimReady ? [] : ["cannot read files"]),
+    "cannot send email or create documents yet",
+  ].join(", ")}), say so in one line and offer what you can do instead.`,
   "",
+  ...(bilimReady
+    ? [
+        "Knowledge base:",
+        "- The bilim_qidiruv tool reads the owner's own notes: services, prices, deadlines,",
+        "  order and payment procedure, warranty, past decisions. Those facts exist nowhere",
+        "  else — not in your memory, not on the web.",
+        "- Search it before answering anything about this business. Never answer such a",
+        "  question from memory: an invented price or deadline does real damage.",
+        "- Base the answer on the passages you got back and name the file they came from,",
+        "  so the owner can see what the answer rests on and correct the file if it is wrong.",
+        "- If the search comes back empty, say the knowledge base does not cover it and offer",
+        "  to answer once it is added. Do not guess.",
+        "- If a passage carries a date or a validity period, mention it.",
+        ...(config.ai.webSearch
+          ? [
+              "- You may use both tools in one answer: the base for our own terms, the web for",
+              "  outside facts. Keep it clear which fact came from where.",
+            ]
+          : []),
+        "",
+      ]
+    : []),
   ...(config.ai.webSearch
     ? [
         "Web search:",
@@ -118,8 +199,33 @@ const STABLE_SYSTEM = [
   "- No tables — Telegram cannot render them. Use short labelled lines instead.",
 ].join("\n");
 
+/**
+ * `/post` buyrug'i uchun qo'shimcha ko'rsatma.
+ *
+ * Bu sinov rejimi: maqsad — vositalar rostdan ishlayotganini va nima topayotganini
+ * ko'rish. Shuning uchun modeldan tayyor post emas, yig'ilgan material so'raladi.
+ */
+const POST_INSTRUCTIONS = [
+  "This turn is a material-gathering step, not a writing step.",
+  "",
+  "The user named a topic. Before saying anything else, gather what you actually have on",
+  "it: search the knowledge base, and search the web too if the topic needs facts from",
+  "outside the business. Use the tools — do not answer from memory.",
+  "",
+  "Then report what you found, in this shape:",
+  "1. <b>Bazadan</b> — the concrete facts the knowledge base gave you, each with the file",
+  "   it came from. If it gave nothing, say so in one line.",
+  "2. <b>Internetdan</b> — the facts the web gave you, each with a link. Skip this section",
+  "   entirely if you did not search the web.",
+  "3. <b>Yetishmayapti</b> — one or two lines: what is still missing before a good post",
+  "   could be written on this topic.",
+  "",
+  "Do not write the post itself. Do not pad with general advice. If both sources came back",
+  "empty, say that plainly instead of filling the space.",
+].join("\n");
+
 /** Har bir foydalanuvchi va kunga xos qism — keshdan keyin keladi. */
-function systemPrompt(lang, userName) {
+function systemPrompt(lang, userName, mode) {
   const today = new Date();
   const date = today.toISOString().slice(0, 10);
   const weekday = today.toLocaleDateString("en-US", { weekday: "long" });
@@ -132,6 +238,7 @@ function systemPrompt(lang, userName) {
       text: [
         `The user is ${userName || "unnamed"}. Today is ${date} (${weekday}).`,
         `Always answer in ${language}, no matter which language the question is written in.`,
+        ...(mode === "post" ? ["", POST_INSTRUCTIONS] : []),
       ].join("\n"),
     },
   ];
@@ -144,13 +251,14 @@ function systemPrompt(lang, userName) {
  * @param {Array<{role: "user"|"assistant", content: string}>} params.history
  * @param {string}   params.lang      javob tili (uz | ru | en)
  * @param {string}   params.userName  foydalanuvchi ismi — murojaat uchun
+ * @param {string}   [params.mode]    "post" bo'lsa model post yozmaydi, material yig'adi
  * @returns {Promise<{ text: string, truncated: boolean, usage: object, searches: number,
- *                     searchErrors: string[] }>}
+ *                     searchErrors: string[], bilimCalls: object[] }>}
  */
-export async function ask({ history, lang, userName }) {
+export async function ask({ history, lang, userName, mode }) {
   if (!client) throw new AiError("disabled", "ANTHROPIC_API_KEY ko'rsatilmagan");
 
-  const system = systemPrompt(lang, userName);
+  const system = systemPrompt(lang, userName, mode);
 
   // Qidiruv paytida javob bir necha so'rovga bo'linishi mumkin. `messages` shu turning
   // ish nusxasi: modelning oraliq javoblari (qidiruv chaqiruvi va natijasi) shu yerda
@@ -159,6 +267,9 @@ export async function ask({ history, lang, userName }) {
   const messages = [...history];
   const usage = { input_tokens: 0, output_tokens: 0 };
   const searchErrors = [];
+  // Vosita rostdan chaqirilganini keyin ko'rsatish uchun: modelning gapiga emas, shu
+  // ro'yxatga qaraymiz.
+  const bilimCalls = [];
   let searches = 0;
   let response;
   let turnLimitHit = false;
@@ -196,9 +307,12 @@ export async function ask({ history, lang, userName }) {
       throw new AiError("refused", response.stop_details?.explanation ?? "model javob bermadi");
     }
 
-    // `pause_turn` — model ishini tugatmadi, davom ettirishni so'rayapti.
-    // Javobini o'zgartirmasdan qaytarib yuboramiz.
-    if (response.stop_reason !== "pause_turn") break;
+    // Sikl ikki sababga ko'ra davom etadi:
+    //   tool_use   — model bizning vositamizni chaqirdi, natijasini kutyapti
+    //   pause_turn — model ishini tugatmadi, davom ettirishni so'rayapti
+    const toolUses = (response.content ?? []).filter((block) => block.type === "tool_use");
+    const needsTools = response.stop_reason === "tool_use" && toolUses.length > 0;
+    if (!needsTools && response.stop_reason !== "pause_turn") break;
 
     if (turn >= MAX_TURNS) {
       turnLimitHit = true;
@@ -206,6 +320,14 @@ export async function ask({ history, lang, userName }) {
     }
 
     messages.push({ role: "assistant", content: response.content });
+
+    // Har bir `tool_use` ga javob qaytishi shart — biri qolib ketsa API xato beradi.
+    if (needsTools) {
+      messages.push({
+        role: "user",
+        content: toolUses.map((block) => runTool(block, bilimCalls)),
+      });
+    }
   }
 
   const text = response.content
@@ -222,7 +344,39 @@ export async function ask({ history, lang, userName }) {
     usage,
     searches,
     searchErrors,
+    bilimCalls,
   };
+}
+
+/**
+ * Modelning vosita chaqiruvini bajaradi.
+ *
+ * Xato tashlanmaydi: `is_error` bilan qaytarilgan natija modelga "bu ishlamadi" degan
+ * ma'lumot beradi va u javobini vositasiz yakunlaydi. Bu `web_search` xatosi bilan bir
+ * xil qoida — bitta vosita ishlamagani uchun butun javob yo'qolmasin.
+ */
+function runTool(block, calls) {
+  const result = { type: "tool_result", tool_use_id: block.id };
+
+  if (block.name !== BILIM_TOOL.name) {
+    return { ...result, is_error: true, content: `Bunday vosita yo'q: ${block.name}` };
+  }
+
+  const query = typeof block.input?.query === "string" ? block.input.query.trim() : "";
+
+  try {
+    const found = bilim.search(query);
+    calls.push({
+      query,
+      chunks: found.hits.length,
+      files: [...new Set(found.hits.map((hit) => hit.file))],
+    });
+    return { ...result, content: bilim.format(found) };
+  } catch (error) {
+    const message = error?.message ?? String(error);
+    calls.push({ query, chunks: 0, files: [], error: message });
+    return { ...result, is_error: true, content: `Bilim bazasi o'qilmadi: ${message}` };
+  }
 }
 
 /** Bir necha so'rovning token hisobini bitta obyektga qo'shib boradi. */
