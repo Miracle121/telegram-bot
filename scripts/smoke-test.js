@@ -40,6 +40,7 @@ fs.writeFileSync(path.join(AGENTLAR_DIR, "muharrir.md"), "# Muharrir\n\nUydirma 
 const sent = []; // sendMessage / answerCallbackQuery chaqiruvlari
 
 const PNG_SIGNATURE = Buffer.from([0x89, 0x50, 0x4e, 0x47]);
+const JPEG_SIGNATURE = Buffer.from([0xff, 0xd8, 0xff]);
 
 const api = http.createServer((req, res) => {
   // Bayt sifatida yig'amiz: sendPhoto multipart yuboradi, uni satrga aylantirsak buziladi.
@@ -50,7 +51,11 @@ const api = http.createServer((req, res) => {
     const method = req.url.split("/").pop();
 
     const payload = method === "sendPhoto"
-      ? { bytes: raw.length, isPng: raw.includes(PNG_SIGNATURE) }
+      ? {
+          bytes: raw.length,
+          isPng: raw.includes(PNG_SIGNATURE),
+          isJpeg: raw.includes(JPEG_SIGNATURE),
+        }
       : (raw.length > 0 ? JSON.parse(raw.toString()) : {});
     sent.push({ method, payload });
 
@@ -131,9 +136,13 @@ await new Promise((r) => aiApi.listen(AI_PORT, r));
 const koverRequests = [];
 let koverResponse = { status: 200, kind: "png" };
 
-// 1x1 shaffof PNG — API rostdan rasm qaytargan holatni ifodalaydi.
+// 1x1 rasmlar — API rostdan rasm qaytargan holatni ifodalaydi.
+// Gemini JPEG qaytaradi (`response_format` da faqat "image/jpeg" qabul qilinadi),
+// shablon esa PNG bo'lib chiziladi — ikkala yo'l ham sinaladi.
 const PNG_1X1 =
   "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mP8z8BQDwAEhQGAhKmMIQAAAABJRU5ErkJggg==";
+const JPEG_1X1 =
+  "/9j/4AAQSkZJRgABAQEAYABgAAD/2wBDAAgGBgcGBQgHBwcJCQgKDBQNDAsLDBkSEw8UHRofHh0aHBwgJC4nICIsIxwcKDcpLDAxNDQ0Hyc5PTgyPC4zNDL/wAALCAABAAEBAREA/8QAFAABAAAAAAAAAAAAAAAAAAAACf/EABQQAQAAAAAAAAAAAAAAAAAAAAD/2gAIAQEAAD8AKp//2Q==";
 
 const koverApi = http.createServer((req, res) => {
   let body = "";
@@ -147,9 +156,10 @@ const koverApi = http.createServer((req, res) => {
       return;
     }
 
-    const content = koverResponse.kind === "png"
-      ? [{ type: "image", mime_type: "image/png", data: PNG_1X1 }]
-      : [{ type: "text", text: "bu rasm emas" }];
+    const content = {
+      png: [{ type: "image", mime_type: "image/png", data: PNG_1X1 }],
+      jpeg: [{ type: "image", mime_type: "image/jpeg", data: JPEG_1X1 }],
+    }[koverResponse.kind] ?? [{ type: "text", text: "bu rasm emas" }];
 
     res.writeHead(200, { "Content-Type": "application/json" });
     res.end(JSON.stringify({
@@ -655,6 +665,12 @@ await postCommand(message(74, "/post kover"), 5);
 check("rasm API'ga so'rov ketdi", koverRequests.length === 1, `(${koverRequests.length})`);
 check("so'rovda model ko'rsatildi", Boolean(koverRequests[0]?.model));
 check("so'rov 16:9 nisbatda", koverRequests[0]?.response_format?.aspect_ratio === "16:9");
+// Gemini "image/png" ga 400 qaytaradi: "Supported values: 'image/jpeg'".
+check(
+  "so'rov jpeg so'raydi",
+  koverRequests[0]?.response_format?.mime_type === "image/jpeg",
+  `(${koverRequests[0]?.response_format?.mime_type})`,
+);
 check(
   "rasmda matn bo'lmasligi so'raldi",
   String(koverRequests[0]?.input?.[0]?.text ?? "").includes("no text"),
@@ -671,6 +687,18 @@ check(
 );
 check("kover postdan oldin ketdi", sent.findIndex((c) => c.method === "sendPhoto") < sent.length - 1);
 check("post ham yetkazildi", lastText().includes("Post matni"));
+
+// --- JPEG javob ham yuboriladi (Gemini aynan shu turni qaytaradi) ---
+koverResponse = { status: 200, kind: "jpeg" };
+aiQueue = [
+  aiBody([{ type: "text", text: "Material." }]),
+  koverUse("kv_jpeg"),
+  aiBody([{ type: "text", text: "JPEG koverli post." }]),
+  aiBody([{ type: "text", text: "O'TDI" }]),
+];
+await postCommand(message(741, "/post jpeg"), 5);
+check("jpeg rasm ham yuborildi", lastPhoto()?.isJpeg === true);
+check("jpeg koverdan keyin post yetkazildi", lastText().includes("JPEG koverli post"));
 
 // --- Limit tugadi: shablonga o'tadi ---
 koverResponse = { status: 429 };

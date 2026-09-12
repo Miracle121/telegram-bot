@@ -309,7 +309,9 @@ rasm postdan oldin alohida xabar bo'lib ketadi.
 
 **Asosiy yo'l — Gemini.** Kalit `.env` da bo'lsa, modelning tavsifi
 `generativelanguage.googleapis.com/v1beta/interactions` ga yuboriladi, natija 16:9
-PNG bo'lib qaytadi. So'rovda alohida talab bor: **rasmda matn bo'lmasin** — rasm
+**JPEG** bo'lib qaytadi (`response_format.mime_type` faqat `image/jpeg` ni qabul
+qiladi — `image/png` ga API 400 beradi). Shablon esa PNG, shuning uchun `sendPhoto`
+turni baytlarga qarab aniqlaydi. So'rovda alohida talab bor: **rasmda matn bo'lmasin** — rasm
 generatorlari harflarni buzib chizadi, sarlavha esa postning o'zida turibdi.
 
 **Zaxira yo'l — shablon.** Quyidagilarning har birida lokal kover chiziladi va

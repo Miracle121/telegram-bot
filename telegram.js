@@ -168,7 +168,10 @@ export function splitText(text, limit = MAX_MESSAGE_LENGTH) {
 export async function sendPhoto(chatId, buffer, { caption = "", parseMode = "HTML" } = {}) {
   const form = new FormData();
   form.append("chat_id", String(chatId));
-  form.append("photo", new Blob([buffer], { type: "image/png" }), "kover.png");
+  // Tur baytlardan aniqlanadi: shablon PNG, Gemini esa JPEG qaytaradi.
+  const jpeg = buffer[0] === 0xff && buffer[1] === 0xd8;
+  const type = jpeg ? "image/jpeg" : "image/png";
+  form.append("photo", new Blob([buffer], { type }), jpeg ? "kover.jpg" : "kover.png");
   if (caption) {
     form.append("caption", caption);
     form.append("parse_mode", parseMode);

@@ -129,8 +129,11 @@ async function gemini(tavsif) {
         model: config.kover.model,
         input: [{ type: "text", text: prompt(tavsif) }],
         response_format: {
+          // Faqat "image/jpeg" qabul qilinadi — "image/png" ga API 400 qaytaradi
+          // ("Supported values: 'image/jpeg'"). Shablon esa PNG bo'lib chiziladi,
+          // shuning uchun `sendPhoto` turni baytlarga qarab aniqlaydi.
           type: "image",
-          mime_type: "image/png",
+          mime_type: "image/jpeg",
           aspect_ratio: "16:9",
           image_size: "1K",
         },
