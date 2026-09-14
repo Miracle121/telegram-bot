@@ -259,28 +259,23 @@ async function handlePost(chatId, user, lang, topic) {
       }
     }
 
+    // Tugmalar har doim chiqadi: qayta yozish va bekor qilish kanalsiz ham ishlaydi,
+    // kanal esa chop etish bosilganda tekshiriladi. Post tugma bosilguncha saqlanadi.
     const shown = result.post + (result.truncated ? t(lang, "aiTruncated") : "");
-    const kanal = kanallar.ol(user.id);
-
-    if (!kanal) {
-      await tg.sendRichText(chatId, shown);
-    } else {
-      // Kanal ulangan — post tugmalar bosilguncha saqlanadi.
-      const id = postlar.saqla({
-        userId: user.id,
-        chatId,
-        lang,
-        userName: user.first_name ?? "",
-        topic,
-        material: result.material.text,
-        post: result.post,
-        photoFileId,
-        photoBuffer: photoFileId ? null : (result.kover?.buffer ?? null),
-        messageId: 0,
-      });
-      const sent = await tg.sendRichText(chatId, shown, { reply_markup: postKeyboard(lang, id) });
-      postlar.ol(id).messageId = sent.at(-1)?.message_id ?? 0;
-    }
+    const id = postlar.saqla({
+      userId: user.id,
+      chatId,
+      lang,
+      userName: user.first_name ?? "",
+      topic,
+      material: result.material.text,
+      post: result.post,
+      photoFileId,
+      photoBuffer: photoFileId ? null : (result.kover?.buffer ?? null),
+      messageId: 0,
+    });
+    const sent = await tg.sendRichText(chatId, shown, { reply_markup: postKeyboard(lang, id) });
+    postlar.ol(id).messageId = sent.at(-1)?.message_id ?? 0;
 
     log.info("post yozildi", {
       userId: user.id,
@@ -438,9 +433,14 @@ async function handlePostButton(query, chatId) {
 
 async function publishPost(query, id, entry, lang) {
   // Kanal tugma chizilgandan keyin uzilgan bo'lishi mumkin — shuning uchun qayta tekshiriladi.
+  // Tugma kanal ulanmagan bo'lsa ham chiqadi — shunda qanday ulashni chatda tushuntiramiz
+  // (alert yopilgach yo'qoladi, xabar esa qoladi). Tugmalar joyida: ulagach qayta bosiladi.
   const kanal = kanallar.ol(entry.userId);
   if (!kanal) {
-    await answerQuery(query, { text: t(lang, "postNoChannel"), show_alert: true });
+    await answerQuery(query);
+    await tg.sendMessage(entry.chatId, t(lang, "postNoChannel"), {
+      reply_parameters: { message_id: entry.messageId, allow_sending_without_reply: true },
+    });
     return;
   }
 

@@ -858,11 +858,6 @@ const keyboardMessage = () =>
     c.method === "sendMessage" &&
     String(c.payload.reply_markup?.inline_keyboard?.[0]?.[0]?.callback_data ?? "").startsWith("post:"));
 
-const hasPostButtons = () =>
-  sent.some((c) => JSON.stringify(c.payload?.reply_markup ?? "").includes("post:"));
-
-check("kanal ulanmaganda tugma chiqmadi", !hasPostButtons());
-
 const KANAL = { id: -1001234567890, type: "channel", title: "Test <kanal>", username: "test_kanal" };
 
 /** Botning kanaldagi holati o'zgargani haqidagi update. */
@@ -916,6 +911,25 @@ const simpleQueue = (text) => [
   aiBody([{ type: "text", text }]),
   aiBody([{ type: "text", text: "O'TDI" }]),
 ];
+
+// --- Kanal ulanmagan: tugmalar baribir chiqadi, chop etish yo'l ko'rsatadi ---
+{
+  const { id, messageId } = await postWithButtons(790, "kanalsiz", simpleQueue("Kanalsiz post."), 4);
+  check("kanal ulanmaganda ham tugmalar chiqdi", keyboardMessage()?.payload.text.includes("Kanalsiz post"));
+
+  sent.length = 0;
+  await post(press(791, `post:pub:${id}`, messageId));
+  await waitFor(() => allText().includes("No channel connected"));
+  check("kanalsiz chop etishda qanday ulash aytildi", lastText().includes("Add Admin"));
+  check("kanalsiz chop etishda tugmalar olinmadi", !sent.some((c) => c.method === "editMessageReplyMarkup"));
+
+  // Qayta yozish kanalsiz ham ishlaydi
+  sent.length = 0;
+  aiQueue = [aiBody([{ type: "text", text: "Kanalsiz ikkinchi." }]), aiBody([{ type: "text", text: "O'TDI" }])];
+  await post(press(792, `post:re:${id}`, messageId));
+  await waitFor(() => keyboardMessage()?.payload.text.includes("Kanalsiz ikkinchi"));
+  check("kanalsiz qayta yozish ishladi", Boolean(keyboardMessage()));
+}
 
 // --- Guruh — e'tiborsiz ---
 sent.length = 0;
@@ -1105,7 +1119,7 @@ check("kanal diskdan o'chdi", !kanallarFile()["555"]);
 
 aiQueue = simpleQueue("Uzilgandan keyingi post.");
 await postCommand(message(851, "/post uzildi"), 4);
-check("uzilgan kanalda tugma chiqmadi", !hasPostButtons() && lastText().includes("Uzilgandan keyingi post"));
+check("uzilgandan keyin ham tugmalar chiqdi", keyboardMessage()?.payload.text.includes("Uzilgandan keyingi post"));
 
 // --- ADMIN_IDS va havola — alohida jarayonda ---
 {

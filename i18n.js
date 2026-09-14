@@ -106,7 +106,12 @@ const LOCALES = {
     postExpired: "Bu post eskirgan (24 soat o'tgan yoki bot qayta ishga tushgan). /post ni qaytadan yozing.",
     postNotYours: "Bu tugma sizning postingiz uchun emas.",
     postInProgress: "Bu post ustida ish ketyapti — bir lahza.",
-    postNoChannel: "Kanal ulanmagan. Botni kanalingizga «Post joylash» huquqi bilan admin qilib qo'shing.",
+    postNoChannel:
+      "📢 <b>Kanal hali ulanmagan.</b> Ulash uchun:\n" +
+      "1. Kanal sozlamalari → <b>Administratorlar</b> → <b>Admin qo'shish</b>\n" +
+      "2. Shu botni tanlang va <b>«Post joylash»</b> huquqini yoqing\n" +
+      "3. «✅ kanal ulandi» xabarini kuting\n\n" +
+      "Keyin shu post tagidagi «Kanalga chop etish» tugmasini qayta bosing.",
     postRewriteStart: "🔄 Qayta yozilmoqda ({round}/{max})…",
     postRewriteLimit: "Bu post {max} marta qayta yozildi. Boshqacha natija kerak bo'lsa, yangi /post bilan boshlang.",
     kanalUlandi:
@@ -194,7 +199,12 @@ const LOCALES = {
     postExpired: "Этот пост устарел (прошло 24 часа или бот перезапускался). Отправьте /post заново.",
     postNotYours: "Эта кнопка не для вашего поста.",
     postInProgress: "Над этим постом уже идёт работа — секунду.",
-    postNoChannel: "Канал не подключён. Добавьте бота админом в свой канал с правом «Публикация сообщений».",
+    postNoChannel:
+      "📢 <b>Канал ещё не подключён.</b> Чтобы подключить:\n" +
+      "1. Настройки канала → <b>Администраторы</b> → <b>Добавить администратора</b>\n" +
+      "2. Выберите этого бота и включите право <b>«Публикация сообщений»</b>\n" +
+      "3. Дождитесь сообщения «✅ канал подключён»\n\n" +
+      "Затем снова нажмите «Опубликовать в канал» под этим постом.",
     postRewriteStart: "🔄 Переписываю ({round}/{max})…",
     postRewriteLimit: "Этот пост переписан {max} раза. Нужен другой результат — начните новый /post.",
     kanalUlandi:
@@ -282,7 +292,12 @@ const LOCALES = {
     postExpired: "This post has expired (24 hours passed or the bot restarted). Send /post again.",
     postNotYours: "This button isn't for your post.",
     postInProgress: "This post is already being worked on — one moment.",
-    postNoChannel: "No channel connected. Add the bot to your channel as an admin allowed to post messages.",
+    postNoChannel:
+      "📢 <b>No channel connected yet.</b> To connect one:\n" +
+      "1. Channel settings → <b>Administrators</b> → <b>Add Admin</b>\n" +
+      "2. Pick this bot and turn on <b>«Post Messages»</b>\n" +
+      "3. Wait for the «✅ channel connected» message\n\n" +
+      "Then press «Publish to channel» under this post again.",
     postRewriteStart: "🔄 Rewriting ({round}/{max})…",
     postRewriteLimit: "This post was rewritten {max} times. For something different, start a new /post.",
     kanalUlandi:
