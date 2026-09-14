@@ -145,7 +145,10 @@ async function gemini(tavsif) {
     throw new KoverError("javobYoq");
   }
 
-  if (!response.ok) throw new KoverError(statusSabab(response.status), `HTTP ${response.status}`);
+  if (!response.ok) {
+    const body = await response.text().catch(() => "");
+    throw new KoverError(statusSabab(response.status, body), `HTTP ${response.status}`);
+  }
 
   let data;
   try {
@@ -165,8 +168,12 @@ async function gemini(tavsif) {
 }
 
 /** HTTP kodini foydalanuvchi tushunadigan sababga aylantiradi. */
-function statusSabab(status) {
+function statusSabab(status, body = "") {
   if (status === 401 || status === 403) return "kalitIshlamadi";
+  // Bepul rejada rasm modellarining limiti 0: kalit to'g'ri, lekin billing yoqilmaguncha
+  // bitta ham rasm chiqmaydi. Bu "limit tugadi, keyinroq urinib ko'ring" emas —
+  // kutish yordam bermaydi, shuning uchun alohida sabab.
+  if (status === 429 && /free_tier/.test(body) && /limit:\s*0\b/.test(body)) return "billing";
   if (status === 429) return "limit";
   if (status === 400 || status === 422) return "rad";
   return "javobYoq";

@@ -52,6 +52,17 @@ let failChatId = null;
 const fakeChats = {};
 const fakeMembers = {};
 
+/** Multipart tanasidan matnli maydonlarni oladi (rasm baytlariga tegmaydi). */
+function multipartFields(raw, names) {
+  const text = raw.toString("latin1");
+  const fields = {};
+  for (const name of names) {
+    const match = text.match(new RegExp(`name="${name}"\\r\\n\\r\\n([\\s\\S]*?)\\r\\n--`));
+    if (match) fields[name] = Buffer.from(match[1], "latin1").toString("utf8");
+  }
+  return fields;
+}
+
 const api = http.createServer((req, res) => {
   // Bayt sifatida yig'amiz: sendPhoto multipart yuboradi, uni satrga aylantirsak buziladi.
   const chunks = [];
@@ -67,8 +78,20 @@ const api = http.createServer((req, res) => {
           bytes: raw.length,
           isPng: raw.includes(PNG_SIGNATURE),
           isJpeg: raw.includes(JPEG_SIGNATURE),
+          ...multipartFields(raw, ["chat_id", "caption", "parse_mode", "reply_markup"]),
         }
       : (raw.length > 0 ? JSON.parse(raw.toString()) : {});
+    if (typeof payload.reply_markup === "string") payload.reply_markup = JSON.parse(payload.reply_markup);
+    // Multipart'da hamma maydon satr; JSON'dagi "@nomi" ga esa tegilmaydi.
+    if (!isJson && /^-?\d+$/.test(payload.chat_id ?? "")) payload.chat_id = Number(payload.chat_id);
+
+    // Model buzuq HTML yozgan holat: Telegram izohni o'qiy olmaydi.
+    if (method === "sendPhoto" && payload.parse_mode && String(payload.caption ?? "").includes("<buzuq")) {
+      sent.push({ method, payload, failed: true });
+      res.writeHead(400, { "Content-Type": "application/json" });
+      res.end(JSON.stringify({ ok: false, error_code: 400, description: "Bad Request: can't parse entities" }));
+      return;
+    }
 
     if (failChatId !== null && payload.chat_id === failChatId) {
       sent.push({ method, payload, failed: true });
@@ -185,8 +208,12 @@ const koverApi = http.createServer((req, res) => {
     koverRequests.push(body ? JSON.parse(body) : {});
 
     if (koverResponse.status !== 200) {
+      // billing: bepul rejada rasm limiti 0 — Gemini aynan shu matnni qaytaradi
+      const message = koverResponse.billing
+        ? "You exceeded your current quota.\n* Quota exceeded for metric: generativelanguage.googleapis.com/generate_content_free_tier_requests, limit: 0, model: gemini-3.1-flash-image"
+        : "soxta xato";
       res.writeHead(koverResponse.status, { "Content-Type": "application/json" });
-      res.end(JSON.stringify({ error: { code: koverResponse.status, message: "soxta xato" } }));
+      res.end(JSON.stringify({ error: { code: koverResponse.status, message } }));
       return;
     }
 
@@ -287,16 +314,24 @@ async function postCommand(update, expected) {
   sent.length = 0;
   aiRequests.length = 0;
   await post(update);
-  await waitFor(() => sent.filter((c) => c.method === "sendMessage").length >= expected);
+  await waitFor(() => textMessages().length >= expected);
 }
 
+/**
+ * Matnli xabarlar: oddiy xabar yoki izohli rasm. Post endi rasm + izoh bo'lib ketadi,
+ * shuning uchun "post yetkazildi" degan tekshiruvlar ikkalasiga ham qaraydi.
+ */
+const textOf = (c) => (c.method === "sendMessage" ? c.payload.text : c.payload.caption);
+const textMessages = () =>
+  sent.filter((c) => !c.failed && (c.method === "sendMessage" || (c.method === "sendPhoto" && c.payload.caption)));
+
 /** Yuborilgan hamma xabar bitta matnda — bosqich qatorlarini qidirish uchun. */
-const allText = () => sent.filter((c) => c.method === "sendMessage").map((c) => c.payload.text).join("\n");
+const allText = () => textMessages().map(textOf).join("\n");
 
 /** So'rovdagi tizim ko'rsatmasi (endi bloklar massivi) — matn bo'yicha qidirish uchun. */
 const systemText = (req) => JSON.stringify(req?.system ?? "");
 
-const lastText = () => [...sent].reverse().find((c) => c.method === "sendMessage")?.payload.text ?? "";
+const lastText = () => textOf(textMessages().at(-1) ?? { method: "sendMessage", payload: {} }) ?? "";
 
 /**
  * Modulni alohida jarayonda yuklaydi va JSON natijasini qaytaradi.
@@ -725,8 +760,10 @@ check(
   "modelga qisqa natija qaytdi",
   aiRequests[2]?.messages?.at(-1)?.content?.[0]?.content === "Kover tayyor.",
 );
-check("kover postdan oldin ketdi", sent.findIndex((c) => c.method === "sendPhoto") < sent.length - 1);
-check("post ham yetkazildi", lastText().includes("Post matni"));
+check("rasm va post bitta xabar: post rasm izohida", lastPhoto()?.caption === "Post matni.", `(${lastPhoto()?.caption})`);
+check("izoh HTML sifatida yuborildi", lastPhoto()?.parse_mode === "HTML");
+check("tugmalar rasmning tagida", String(lastPhoto()?.reply_markup?.inline_keyboard?.[0]?.[0]?.callback_data ?? "").startsWith("post:pub:"));
+check("post alohida matn bo'lib takrorlanmadi", !sent.some((c) => c.method === "sendMessage" && c.payload.text === "Post matni."));
 
 // --- JPEG javob ham yuboriladi (Gemini aynan shu turni qaytaradi) ---
 koverResponse = { status: 200, kind: "jpeg" };
@@ -866,11 +903,17 @@ check("bitta rasm yuborildi", sent.filter((c) => c.method === "sendPhoto").lengt
 // 6j. Kanalga chop etish — post tagidagi tugmalar
 // ---------------------------------------------------------------
 
-/** Post tugmalari bor oxirgi xabar. */
+/** Post tugmalari bor oxirgi xabar — oddiy matn yoki izohli rasm. */
 const keyboardMessage = () =>
   [...sent].reverse().find((c) =>
-    c.method === "sendMessage" &&
+    !c.failed &&
+    (c.method === "sendMessage" || c.method === "sendPhoto") &&
     String(c.payload.reply_markup?.inline_keyboard?.[0]?.[0]?.callback_data ?? "").startsWith("post:"));
+
+const keyboardText = () => {
+  const msg = keyboardMessage();
+  return msg ? String(textOf(msg) ?? "") : "";
+};
 
 const KANAL = { id: -1001234567890, type: "channel", title: "Test <kanal>", username: "test_kanal" };
 
@@ -898,6 +941,8 @@ const press = (updateId, data, messageId, fromId = 555) => ({
 });
 
 const toChannel = (method) => sent.filter((c) => c.method === method && c.payload?.chat_id === KANAL.id && !c.failed);
+/** Kanalga ketgan postlar: matnli xabar yoki izohli rasm (izohsiz rasm post emas). */
+const channelPosts = () => [...toChannel("sendMessage"), ...toChannel("sendPhoto").filter((c) => c.payload.caption)];
 const lastAnswer = () => [...sent].reverse().find((c) => c.method === "answerCallbackQuery")?.payload.text ?? "";
 const kanallarFile = () => {
   try {
@@ -929,7 +974,7 @@ const simpleQueue = (text) => [
 // --- Kanal ulanmagan: tugmalar baribir chiqadi, chop etish yo'l ko'rsatadi ---
 {
   const { id, messageId } = await postWithButtons(790, "kanalsiz", simpleQueue("Kanalsiz post."), 4);
-  check("kanal ulanmaganda ham tugmalar chiqdi", keyboardMessage()?.payload.text.includes("Kanalsiz post"));
+  check("kanal ulanmaganda ham tugmalar chiqdi", keyboardText().includes("Kanalsiz post"));
 
   sent.length = 0;
   await post(press(791, `post:pub:${id}`, messageId));
@@ -941,7 +986,7 @@ const simpleQueue = (text) => [
   sent.length = 0;
   aiQueue = [aiBody([{ type: "text", text: "Kanalsiz ikkinchi." }]), aiBody([{ type: "text", text: "O'TDI" }])];
   await post(press(792, `post:re:${id}`, messageId));
-  await waitFor(() => keyboardMessage()?.payload.text.includes("Kanalsiz ikkinchi"));
+  await waitFor(() => keyboardText().includes("Kanalsiz ikkinchi"));
   check("kanalsiz qayta yozish ishladi", Boolean(keyboardMessage()));
 }
 
@@ -1055,7 +1100,7 @@ koverResponse = { status: 200, kind: "png" };
 
   const rows = msg.payload.reply_markup.inline_keyboard;
   const datas = rows.flat().map((b) => b.callback_data);
-  check("tugmalar post matni tagida", msg.payload.text.includes("Kanal uchun post"));
+  check("tugmalar post matni tagida", String(textOf(msg)).includes("Kanal uchun post"));
   check("uchta tugma: 1 + 2 qator", rows.length === 2 && rows[0].length === 1 && rows[1].length === 2);
   check(
     "tugma ma'lumoti to'g'ri va 64 baytdan kichik",
@@ -1069,7 +1114,7 @@ koverResponse = { status: 200, kind: "png" };
   await post(press(804, `post:pub:${id}`, messageId, 777));
   // 777 til tanlamagan — javob uning language_code (uz) bo'yicha.
   check("begona odam chop eta olmadi", lastAnswer().includes("sizning postingiz uchun emas"), `(${lastAnswer()})`);
-  check("begonadan kanalga hech narsa ketmadi", toChannel("sendMessage").length === 0);
+  check("begonadan kanalga hech narsa ketmadi", channelPosts().length === 0);
 
   // Ikki marta tez bosish — bitta post
   sent.length = 0;
@@ -1078,10 +1123,11 @@ koverResponse = { status: 200, kind: "png" };
     post(press(806, `post:pub:${id}`, messageId)),
   ]);
   await waitFor(() => allText().includes("is live"));
-  check("ikki bosishda kanalga bitta post ketdi", toChannel("sendMessage").length === 1, `(${toChannel("sendMessage").length})`);
-  check("kanalga post matni ketdi", toChannel("sendMessage")[0]?.payload.text === "Kanal uchun post.");
+  check("ikki bosishda kanalga bitta post ketdi", channelPosts().length === 1, `(${channelPosts().length})`);
+  check("kanalga post matni ketdi", textOf(channelPosts()[0] ?? { payload: {} }) === "Kanal uchun post.");
   check("kanalga kover file_id bilan ketdi", toChannel("sendPhoto")[0]?.payload.photo === "soxta_file_id");
-  check("kanalda kover postdan oldin", sent.indexOf(toChannel("sendPhoto")[0]) < sent.indexOf(toChannel("sendMessage")[0]));
+  check("kanalda rasm va matn bitta post", toChannel("sendPhoto").length === 1 && toChannel("sendMessage").length === 0);
+  check("kanalda tugma yo'q", !toChannel("sendPhoto")[0]?.payload.reply_markup);
   check(
     "chop etilgach tugmalar olindi",
     sent.some((c) => c.method === "editMessageReplyMarkup" && c.payload.message_id === messageId),
@@ -1093,7 +1139,7 @@ koverResponse = { status: 200, kind: "png" };
   sent.length = 0;
   await post(press(807, `post:pub:${id}`, messageId));
   check("chop etilgan post eskirgan deb javob berdi", lastAnswer().includes("expired"));
-  check("qayta bosishda kanalga hech narsa ketmadi", toChannel("sendMessage").length === 0);
+  check("qayta bosishda kanalga hech narsa ketmadi", channelPosts().length === 0);
 }
 
 // --- Bekor qilish ---
@@ -1104,11 +1150,11 @@ koverResponse = { status: 200, kind: "png" };
   await post(press(811, `post:no:${id}`, messageId));
   check("bekor qilindi deb aytildi", lastText().includes("Cancelled"));
   check("bekor qilishda tugmalar olindi", sent.some((c) => c.method === "editMessageReplyMarkup" && c.payload.message_id === messageId));
-  check("bekor qilishda kanalga hech narsa ketmadi", toChannel("sendMessage").length === 0);
+  check("bekor qilishda kanalga hech narsa ketmadi", channelPosts().length === 0);
 
   sent.length = 0;
   await post(press(812, `post:pub:${id}`, messageId));
-  check("bekor qilingan postni chop etib bo'lmadi", lastAnswer().includes("expired") && toChannel("sendMessage").length === 0);
+  check("bekor qilingan postni chop etib bo'lmadi", lastAnswer().includes("expired") && channelPosts().length === 0);
 }
 
 // --- Noma'lum ID ---
@@ -1127,7 +1173,7 @@ check("noma'lum ID eskirgan deb javob berdi", lastAnswer().includes("expired"));
     aiBody([{ type: "text", text: "O'TDI" }]),
   ];
   await post(press(821, `post:re:${id}`, messageId));
-  await waitFor(() => keyboardMessage()?.payload.text.includes("Ikkinchi variant K."));
+  await waitFor(() => keyboardText().includes("Ikkinchi variant K."));
   const fresh = keyboardMessage();
 
   check("qayta yozish faqat yozuvchi + muharrir", aiRequests.length === 2, `(${aiRequests.length} ta so'rov)`);
@@ -1153,13 +1199,13 @@ check("noma'lum ID eskirgan deb javob berdi", lastAnswer().includes("expired"));
   // Eski xabardagi tugma endi ishlamaydi
   sent.length = 0;
   await post(press(822, `post:pub:${id}`, messageId));
-  check("eski xabardagi tugma eskirgan", lastAnswer().includes("expired") && toChannel("sendMessage").length === 0);
+  check("eski xabardagi tugma eskirgan", lastAnswer().includes("expired") && channelPosts().length === 0);
 
   // Yangi variant chop etiladi
   sent.length = 0;
   await post(press(823, `post:pub:${id}`, fresh.result.message_id));
   await waitFor(() => allText().includes("is live"));
-  check("kanalga yangi variant chiqdi", toChannel("sendMessage")[0]?.payload.text === "Ikkinchi variant K.");
+  check("kanalga yangi variant chiqdi", textOf(channelPosts()[0] ?? { payload: {} }) === "Ikkinchi variant K.");
 }
 
 // --- Qayta yozish chegarasi: 3 martadan keyin to'xtaydi ---
@@ -1173,7 +1219,7 @@ check("noma'lum ID eskirgan deb javob berdi", lastAnswer().includes("expired"));
       aiBody([{ type: "text", text: "O'TDI" }]),
     ];
     await post(press(830 + round, `post:re:${id}`, messageId));
-    await waitFor(() => keyboardMessage()?.payload.text.includes(`Variant ${round}.`));
+    await waitFor(() => keyboardText().includes(`Variant ${round}.`));
     messageId = keyboardMessage().result.message_id;
   }
 
@@ -1202,7 +1248,115 @@ check("noma'lum ID eskirgan deb javob berdi", lastAnswer().includes("expired"));
   sent.length = 0;
   await post(press(842, `post:pub:${id}`, messageId));
   await waitFor(() => allText().includes("is live"));
-  check("tuzatilgach qayta chop etildi", toChannel("sendMessage")[0]?.payload.text === "Xatoli post.");
+  check("tuzatilgach qayta chop etildi", textOf(channelPosts()[0] ?? { payload: {} }) === "Xatoli post.");
+}
+
+// ---------------------------------------------------------------
+// 6k. Rasm + izoh bitta post: uzunlik chegarasi
+// ---------------------------------------------------------------
+
+// --- Uzun post: muharrirga bormay qisqartirishga qaytadi ---
+{
+  const LONG = "Uzun post matni. ".repeat(70); // ~1190 belgi
+  koverResponse = { status: 200, kind: "png" };
+  const { id, messageId } = await postWithButtons(860, "uzun", [
+    aiBody([{ type: "text", text: "Material." }]),
+    koverUse("kv_u1"),
+    aiBody([{ type: "text", text: LONG }]),
+    aiBody([{ type: "text", text: "Qisqa post." }]),
+    aiBody([{ type: "text", text: "O'TDI" }]),
+  ], 7); // iz + yozuvchi + kover + uzun + yozuvchi + muharrir + post
+
+  const writerReq = aiRequests.find((r) => systemText(r).includes("you are the writer"));
+  check("yozuvchiga izoh chegarasi aytildi (ko'rsatmada)", systemText(writerReq).includes("caption under the cover image"));
+  check("uzun post bosqichi ko'rsatildi", allText().includes("came out long"));
+  check(
+    "uzun postda muharrir chaqirilmadi",
+    aiRequests.filter((r) => systemText(r).includes("you are the editor")).length === 1,
+  );
+  check(
+    "yozuvchiga qisqartirish so'raldi",
+    aiRequests.some((r) => String(r.messages?.at(-1)?.content ?? "").includes("has to fit into an image caption")),
+  );
+  check("qisqargan post rasm izohida", lastPhoto()?.caption === "Qisqa post.", `(${lastPhoto()?.caption})`);
+  check("uzun variant yuborilmadi", !allText().includes("Uzun post matni"));
+
+  // Rasmli postni qayta yozish: rasm qayta yuklanmaydi, yangi izoh bilan keladi
+  sent.length = 0;
+  aiQueue = [aiBody([{ type: "text", text: "Qayta yozilgan qisqa post." }]), aiBody([{ type: "text", text: "O'TDI" }])];
+  await post(press(861, `post:re:${id}`, messageId));
+  await waitFor(() => keyboardText().includes("Qayta yozilgan qisqa post"));
+  const fresh = keyboardMessage();
+  check("qayta yozilgan post ham rasm + izoh", fresh.method === "sendPhoto" && fresh.payload.photo === "soxta_file_id");
+  check("qayta yozishda rasm qayta yuklanmadi", !sent.some((c) => c.method === "sendPhoto" && c.payload.bytes));
+
+  // Kanalga ham rasm + izoh
+  await post(memberUpdate(862, KANAL, "administrator", { can_post_messages: true }));
+  sent.length = 0;
+  await post(press(863, `post:pub:${id}`, fresh.result.message_id));
+  await waitFor(() => allText().includes("is live"));
+  check("kanalga qayta yozilgan post rasm izohida chiqdi", toChannel("sendPhoto")[0]?.payload.caption === "Qayta yozilgan qisqa post.");
+}
+
+// --- Hech sig'madi: post yo'qolmaydi, rasm va matn alohida ketadi ---
+{
+  const LONG = "Juda uzun post. ".repeat(80);
+  aiQueue = [
+    aiBody([{ type: "text", text: "Material." }]),
+    koverUse("kv_u2"),
+    aiBody([{ type: "text", text: LONG }]),
+    aiBody([{ type: "text", text: LONG }]),
+    aiBody([{ type: "text", text: LONG }]),
+  ];
+  // iz + (yozuvchi + uzun) x3 + kover + ogohlantirish + post = 10
+  await postCommand(message(870, "/post sig'madi"), 10);
+  await waitFor(() => keyboardMessage());
+
+  check("sig'maganda muharrir umuman chaqirilmadi", !aiRequests.some((r) => systemText(r).includes("you are the editor")));
+  check("sig'magani aytildi", allText().includes("didn't fit into 1000"));
+  check("sig'maganda rasm izohsiz ketdi", sent.some((c) => c.method === "sendPhoto" && !c.failed && !c.payload.caption));
+  check("sig'maganda matn tugmalar bilan ketdi", keyboardMessage()?.method === "sendMessage" && keyboardText().includes("Juda uzun post"));
+  check("\"muharrir rozi bo'lmadi\" deyilmadi", !allText().includes("editor still said no"));
+}
+
+// --- Buzuq HTML izohi: formatlashsiz qayta yuboriladi ---
+aiQueue = [
+  aiBody([{ type: "text", text: "Material." }]),
+  koverUse("kv_u3"),
+  aiBody([{ type: "text", text: "<buzuq>teg yopilmagan post" }]),
+  aiBody([{ type: "text", text: "O'TDI" }]),
+];
+await postCommand(message(875, "/post buzuq html"), 5);
+await waitFor(() => sent.some((c) => c.method === "sendPhoto" && !c.failed && c.payload.caption));
+check("buzuq HTML izoh avval rad etildi", sent.some((c) => c.method === "sendPhoto" && c.failed));
+check(
+  "buzuq HTML izoh formatlashsiz yetkazildi",
+  sent.some((c) => c.method === "sendPhoto" && !c.failed && c.payload.caption?.includes("teg yopilmagan") && !c.payload.parse_mode),
+);
+
+// --- Gemini billing yoqilmagan: "limit" emas, aniq sabab ---
+koverResponse = { status: 429, billing: true };
+aiQueue = [
+  aiBody([{ type: "text", text: "Material." }]),
+  koverUse("kv_u4"),
+  aiBody([{ type: "text", text: "Billingsiz post." }]),
+  aiBody([{ type: "text", text: "O'TDI" }]),
+];
+await postCommand(message(876, "/post billing"), 5);
+check("billing yoqilmagani aytildi", allText().includes("billing for images isn't enabled"));
+check("billingda ham post rasm bilan yetkazildi", lastPhoto()?.caption === "Billingsiz post." && lastPhoto()?.isPng === true);
+koverResponse = { status: 200, kind: "png" };
+
+// --- Izoh uzunligi Telegram kabi sanaladi ---
+{
+  const tgUrl = pathToFileURL(path.join(PROJECT_ROOT, "telegram.js")).href;
+  const r = childJson(
+    `const tg = await import(${JSON.stringify(tgUrl)});` +
+      `console.log(JSON.stringify({ a: tg.captionLength("<b>ab</b> &lt; <a href=\\"https://x.uz\\">c</a>"), b: tg.captionLength("😀") }));`,
+    {},
+  );
+  check("izoh uzunligida teglar sanalmadi", r.a === 6, JSON.stringify(r));
+  check("smaylik ikki birlik sanaldi", r.b === 2);
 }
 
 // --- Bot kanaldan chiqarildi: kanal uziladi, tugmalar chiqmaydi ---
@@ -1213,7 +1367,7 @@ check("kanal diskdan o'chdi", !kanallarFile()["555"]);
 
 aiQueue = simpleQueue("Uzilgandan keyingi post.");
 await postCommand(message(851, "/post uzildi"), 4);
-check("uzilgandan keyin ham tugmalar chiqdi", keyboardMessage()?.payload.text.includes("Uzilgandan keyingi post"));
+check("uzilgandan keyin ham tugmalar chiqdi", keyboardText().includes("Uzilgandan keyingi post"));
 
 // --- ADMIN_IDS va havola — alohida jarayonda ---
 {

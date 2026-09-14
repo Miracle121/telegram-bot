@@ -25,11 +25,12 @@ ma'ruza o'qiyotgandek emas.
 
 ## Uzunlik
 
-O'rtacha: **10-15 qator**, taxminan 1200-1800 belgi. Bitta ekranda o'qiladigan,
-lekin mazmunga to'la post.
+Qisqa: **6-9 qator**, taxminan 600-900 belgi. Post rasm tagida izoh bo'lib
+chiqadi, Telegram esa izohni 1024 belgida kesadi — shuning uchun 1000 belgidan
+oshmaydi (bu chegara kodda ham tekshiriladi).
 
-- Birinchi 1-2 qator — ilmoq: savol, raqam yoki aniq vaziyat.
-- O'rtasi — asosiy mazmun. 3-5 ta qisqa bo'lak yoki `•` bilan ro'yxat.
+- Birinchi qator — ilmoq: savol, raqam yoki aniq vaziyat.
+- O'rtasi — asosiy mazmun. 2-4 ta qisqa bo'lak yoki `•` bilan ro'yxat.
 - Oxiri — bitta qatorlik xulosa.
 
 ## Oxirgi qator

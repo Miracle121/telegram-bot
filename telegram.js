@@ -164,6 +164,21 @@ export function splitText(text, limit = MAX_MESSAGE_LENGTH) {
   return chunks;
 }
 
+// Rasm izohi (caption) chegarasi. Telegram teglarni emas, ko'rinadigan matnni sanaydi.
+export const CAPTION_LIMIT = 1024;
+
+/**
+ * HTML matnning Telegram sanaydigan uzunligi: teglar olib tashlanadi, `&lt;` kabi
+ * belgilar bittadan hisoblanadi. JS satr uzunligi (UTF-16) olinadi — Telegram ham
+ * shunday sanaydi, smaylik ikki birlik bo'ladi.
+ */
+export function captionLength(html) {
+  return String(html)
+    .replace(/<[^>]*>/g, "")
+    .replace(/&(lt|gt|amp|quot|#\d+);/g, "_")
+    .length;
+}
+
 /**
  * Rasm yuboradi.
  *
@@ -176,13 +191,28 @@ export function splitText(text, limit = MAX_MESSAGE_LENGTH) {
  *
  * `buffer` o'rniga satr berilsa — bu Telegram'dagi `file_id`: rasm qayta yuklanmaydi,
  * oddiy JSON so'rov ketadi. Kanalga chop etishda shunday bo'ladi.
+ *
+ * Izoh HTML bo'lsa va model noto'g'ri teg yozgan bo'lsa, Telegram 400 beradi —
+ * `sendRichText` dagi kabi izoh formatlashsiz qayta yuboriladi.
  */
-export async function sendPhoto(chatId, buffer, { caption = "", parseMode = "HTML" } = {}) {
+export async function sendPhoto(chatId, buffer, { caption = "", parseMode = "HTML", replyMarkup } = {}) {
+  try {
+    return await sendPhotoOnce(chatId, buffer, { caption, parseMode, replyMarkup });
+  } catch (error) {
+    const badHtml = caption && parseMode && error instanceof TelegramError && error.status === 400;
+    if (!badHtml) throw error;
+    return sendPhotoOnce(chatId, buffer, { caption, parseMode: "", replyMarkup });
+  }
+}
+
+async function sendPhotoOnce(chatId, buffer, { caption, parseMode, replyMarkup }) {
   if (typeof buffer === "string") {
     return callApi("sendPhoto", {
       chat_id: chatId,
       photo: buffer,
-      ...(caption ? { caption, parse_mode: parseMode } : {}),
+      ...(caption ? { caption } : {}),
+      ...(caption && parseMode ? { parse_mode: parseMode } : {}),
+      ...(replyMarkup ? { reply_markup: replyMarkup } : {}),
     });
   }
 
@@ -194,8 +224,9 @@ export async function sendPhoto(chatId, buffer, { caption = "", parseMode = "HTM
   form.append("photo", new Blob([buffer], { type }), jpeg ? "kover.jpg" : "kover.png");
   if (caption) {
     form.append("caption", caption);
-    form.append("parse_mode", parseMode);
+    if (parseMode) form.append("parse_mode", parseMode);
   }
+  if (replyMarkup) form.append("reply_markup", JSON.stringify(replyMarkup));
 
   const response = await fetch(`${API_BASE}/sendPhoto`, {
     method: "POST",

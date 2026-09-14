@@ -268,17 +268,8 @@ async function handlePost(chatId, user, lang, topic) {
       await tg.sendRichText(chatId, t(lang, "postLimitReached", { max: String(result.maxRewrites) }));
     }
 
-    // Rasm avval ketadi, matn keyin: post izohga sig'maydi (izoh chegarasi 1024 belgi).
-    // Rasm yuborilmasa post baribir yetib boradi — bitta kover uchun ish yo'qolmasin.
-    let photoFileId = "";
-    if (result.kover) {
-      try {
-        const sentPhoto = await tg.sendPhoto(chatId, result.kover.buffer);
-        // Eng katta o'lcham oxirida turadi. Kanalga shu id bilan yuboriladi — qayta yuklanmaydi.
-        photoFileId = sentPhoto?.photo?.at(-1)?.file_id ?? "";
-      } catch (error) {
-        log.warn("kover yuborilmadi", { userId: user.id, error: error.message });
-      }
+    if (result.verdict === "uzun") {
+      await tg.sendRichText(chatId, t(lang, "postTooLong", { max: String(agentlar.POST_MAX_CHARS) }));
     }
 
     // Tugmalar har doim chiqadi: qayta yozish va bekor qilish kanalsiz ham ishlaydi,
@@ -292,12 +283,18 @@ async function handlePost(chatId, user, lang, topic) {
       topic,
       material: result.material.text,
       post: result.post,
-      photoFileId,
-      photoBuffer: photoFileId ? null : (result.kover?.buffer ?? null),
+      photoFileId: "",
+      photoBuffer: result.kover?.buffer ?? null,
       messageId: 0,
     });
-    const sent = await tg.sendRichText(chatId, shown, { reply_markup: postKeyboard(lang, id) });
-    postlar.ol(id).messageId = sent.at(-1)?.message_id ?? 0;
+    const entry = postlar.ol(id);
+    const sent = await sendPost(chatId, entry.photoBuffer, shown, postKeyboard(lang, id));
+    entry.messageId = sent.messageId;
+    // Telegram'ga yuklangan rasm — keyingi yuborishlar (kanal, qayta yozish) shu id bilan.
+    if (sent.photoFileId) {
+      entry.photoFileId = sent.photoFileId;
+      entry.photoBuffer = null;
+    }
 
     log.info("post yozildi", {
       userId: user.id,
@@ -351,6 +348,14 @@ async function sendStage(chatId, lang, stage) {
           round: String(stage.round),
           max: String(stage.maxRewrites),
         }));
+    return;
+  }
+
+  if (stage.type === "uzunlik") {
+    await tg.sendRichText(chatId, t(lang, "postStageTooLong", {
+      length: String(stage.length),
+      max: String(stage.max),
+    }));
     return;
   }
 
@@ -453,6 +458,53 @@ async function handlePostButton(query, chatId) {
   await answerQuery(query);
 }
 
+/**
+ * Postni yuboradi — imkon bo'lsa **bitta xabar**: rasm va uning tagida izoh (caption).
+ *
+ * Izoh chegarasi 1024 belgi. Yozuvchi shunga moslab yozadi va `agentlar.js` uzunlikni
+ * tekshiradi, lekin baribir sig'masa post yo'qolmaydi: rasm va matn alohida ketadi,
+ * tugmalar esa matn tagida. Rasm yuborilmasa ham matn baribir yetib boradi.
+ *
+ * `photo` — Buffer (birinchi yuborish) yoki `file_id` (kanal, qayta yozish).
+ *
+ * @returns {Promise<{ messageId: number, firstMessageId: number, photoFileId: string }>}
+ *   messageId — tugmalar turgan xabar, firstMessageId — havola uchun postning boshi
+ */
+async function sendPost(chatId, photo, text, replyMarkup) {
+  const fileIdOf = (message) => message?.photo?.at(-1)?.file_id ?? ""; // eng katta o'lcham oxirida
+
+  if (photo && tg.captionLength(text) <= tg.CAPTION_LIMIT) {
+    try {
+      const sent = await tg.sendPhoto(chatId, photo, { caption: text, replyMarkup });
+      return { messageId: sent.message_id, firstMessageId: sent.message_id, photoFileId: fileIdOf(sent) };
+    } catch (error) {
+      // Rasm ketmadi — matnni rasmsiz yuboramiz. Kanal huquqi yo'q bo'lsa matn ham
+      // yiqiladi va xato chaqiruvchiga chiqadi — shunisi to'g'ri.
+      log.warn("rasmli post yuborilmadi, matn rasmsiz ketadi", { chatId, error: error.message });
+      photo = null;
+    }
+  }
+
+  let firstMessageId = 0;
+  let photoFileId = "";
+  if (photo) {
+    try {
+      const sentPhoto = await tg.sendPhoto(chatId, photo);
+      firstMessageId = sentPhoto.message_id;
+      photoFileId = fileIdOf(sentPhoto);
+    } catch (error) {
+      log.warn("kover yuborilmadi", { chatId, error: error.message });
+    }
+  }
+
+  const sent = await tg.sendRichText(chatId, text, replyMarkup ? { reply_markup: replyMarkup } : {});
+  return {
+    messageId: sent.at(-1)?.message_id ?? 0,
+    firstMessageId: firstMessageId || (sent[0]?.message_id ?? 0),
+    photoFileId,
+  };
+}
+
 async function publishPost(query, id, entry, lang) {
   // Kanal tugma chizilgandan keyin uzilgan bo'lishi mumkin — shuning uchun qayta tekshiriladi.
   // Tugma kanal ulanmagan bo'lsa ham chiqadi — shunda qanday ulashni chatda tushuntiramiz
@@ -472,19 +524,9 @@ async function publishPost(query, id, entry, lang) {
 
   let firstMessageId = 0;
   try {
-    const photo = entry.photoFileId || entry.photoBuffer;
-    if (photo) {
-      // Rasm yuborilmasa post baribir chiqsin — shaxsiy chatdagi qoida bilan bir xil.
-      try {
-        const sentPhoto = await tg.sendPhoto(kanal.id, photo);
-        firstMessageId = sentPhoto?.message_id ?? 0;
-      } catch (error) {
-        log.warn("kanalga kover yuborilmadi", { userId: entry.userId, kanalId: kanal.id, error: error.message });
-      }
-    }
-
-    const sent = await tg.sendRichText(kanal.id, entry.post);
-    firstMessageId ||= sent[0]?.message_id ?? 0;
+    // Kanalda ham shaxsiy chatdagidek: rasm + izoh bitta post.
+    const sent = await sendPost(kanal.id, entry.photoFileId || entry.photoBuffer, entry.post);
+    firstMessageId = sent.firstMessageId;
   } catch (error) {
     entry.holat = "kutmoqda";
     log.error("post kanalga chiqmadi", { userId: entry.userId, kanalId: kanal.id, error: error.message });
@@ -578,13 +620,21 @@ async function rewritePost(query, id, entry, lang) {
     if (result.verdict === "fail") {
       await tg.sendRichText(chatId, t(lang, "postLimitReached", { max: String(result.maxRewrites) }));
     }
+    if (result.verdict === "uzun") {
+      await tg.sendRichText(chatId, t(lang, "postTooLong", { max: String(agentlar.POST_MAX_CHARS) }));
+    }
 
     entry.post = result.post;
     entry.rewrites += 1;
 
+    // Kover o'zgarmaydi — yangi matn o'sha rasm bilan yana bitta post bo'lib keladi.
     const shown = result.post + (result.truncated ? t(lang, "aiTruncated") : "");
-    const sent = await tg.sendRichText(chatId, shown, { reply_markup: postKeyboard(lang, id) });
-    entry.messageId = sent.at(-1)?.message_id ?? 0;
+    const sent = await sendPost(chatId, entry.photoFileId || entry.photoBuffer, shown, postKeyboard(lang, id));
+    entry.messageId = sent.messageId;
+    if (sent.photoFileId && !entry.photoFileId) {
+      entry.photoFileId = sent.photoFileId;
+      entry.photoBuffer = null;
+    }
 
     log.info("post qayta yozildi", {
       userId: entry.userId,

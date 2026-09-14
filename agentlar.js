@@ -8,7 +8,8 @@
 // (`O'TDI` / `QAYTA YOZ`) `ai.js` da qat'iy turadi: fayl egasi uni tasodifan
 // o'chirib qo'ysa ham oqim buzilmasin.
 //
-// Telegram haqida hech narsa bilmaydi: bosqichlarni `onStage` orqali xabar qiladi,
+// Telegram bilan faqat bitta joyda bog'langan — post uzunligini izoh chegarasi bo'yicha
+// sanash (`captionLength`). Xabar yubormaydi: bosqichlarni `onStage` orqali xabar qiladi,
 // ularni foydalanuvchiga ko'rsatish `bot.js` ishi.
 
 import fs from "node:fs";
@@ -16,8 +17,14 @@ import path from "node:path";
 
 import { config } from "./config.js";
 import * as ai from "./ai.js";
+import { captionLength } from "./telegram.js";
 
 const ROLES = ["yozuvchi", "muharrir"];
+
+// Post rasm izohi (caption) bo'lib chiqadi, Telegram esa izohni 1024 belgida kesadi.
+// 24 belgi zaxira: shaxsiy chatda "(javob kesildi)" kabi izoh qo'shilishi mumkin.
+// Chegara kodda, xarakter faylida emas — egasi faylni o'zgartirsa ham post sig'sin.
+export const POST_MAX_CHARS = 1000;
 
 // Xarakter fayli har chaqiruvda modelga yuboriladi — ya'ni har bir kilobayt pul.
 // Bu chegara tasodifan qo'yilgan katta faylni ushlab qoladi.
@@ -162,6 +169,17 @@ function editorPrompt(topic, material, post) {
     "--- The post to check ---",
     post,
     "--- end of post ---",
+  ].join("\n");
+}
+
+function shortenPrompt(length) {
+  return [
+    `The post is ${length} characters long, but it has to fit into an image caption:`,
+    `at most ${POST_MAX_CHARS} characters, spaces and emoji included (HTML tags do not count).`,
+    "",
+    "Write the whole post again, noticeably shorter — aim for about 800 characters.",
+    "Keep the hook, the key facts and the closing question or call to action; drop the rest.",
+    "Output only the post itself.",
   ].join("\n");
 }
 
@@ -327,6 +345,25 @@ async function yozuvchiSikli({
     if (!kover && written.kover) {
       kover = written.kover;
       await onStage({ type: "kover", usul: kover.usul, sabab: kover.sabab });
+    }
+
+    // Uzunlik muharrirdan oldin, kodda tekshiriladi: sig'magan postni muharrirga
+    // ko'rsatish — bekor so'rov, u baribir qayta yoziladi. Chegara ham qayta yozish
+    // hisobiga kiradi, shuning uchun sikl cheksiz aylanmaydi. Oxirida ham sig'masa,
+    // post yo'qolmaydi: `bot.js` rasm va matnni alohida yuboradi.
+    const length = captionLength(post);
+    if (length > POST_MAX_CHARS) {
+      // "uzun" — muharrir qarori emas: bot "muharrir rozi bo'lmadi" deb aytmasin.
+      rounds.push({ verdict: "uzun", reasons: [] });
+      await onStage({ type: "uzunlik", length, max: POST_MAX_CHARS, round, maxRewrites });
+      if (round >= maxRewrites) break;
+
+      history = [
+        ...history,
+        { role: "assistant", content: post },
+        { role: "user", content: shortenPrompt(length) },
+      ];
+      continue;
     }
 
     // 3-bosqich: muharrir. Tarixsiz — u faqat mavzu, material va postni ko'radi,

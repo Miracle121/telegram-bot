@@ -83,6 +83,7 @@ const LOCALES = {
     koverKalitYoq: "rasm kaliti qo'yilmagan",
     koverKalitIshlamadi: "rasm kaliti ishlamadi",
     koverLimit: "limit tugagan",
+    koverBilling: "Google hisobida rasm uchun billing yoqilmagan",
     koverRad: "so'rov rad etildi",
     koverJavobYoq: "xizmat javob bermadi",
     koverBuzuq: "javob tushunarsiz",
@@ -90,6 +91,8 @@ const LOCALES = {
     postStageEditorFail: "📝 <b>Muharrir:</b> qayta yoz\n{reasons}",
     postStageEditorUnclear: "📝 <b>Muharrir</b> javobini tushunmadim — post shundayligicha qoldi",
     postNoReason: "• sabab aytilmadi",
+    postStageTooLong: "📏 Post uzun chiqdi: {length} belgi — rasm tagiga {max} tagacha sig'adi, qisqartiriladi",
+    postTooLong: "⚠️ <i>Post {max} belgiga sig'madi — rasm va matn alohida xabar bo'lib ketadi.</i>",
     postLimitReached: "⚠️ <i>{max} marta qayta yozildi, muharrir baribir rozi bo'lmadi. Oxirgi variant:</i>",
     postAgentMissing:
       "Xarakter fayli o'qilmadi: <code>agentlar/{file}</code> — {reason}.\n" +
@@ -192,6 +195,7 @@ const LOCALES = {
     koverKalitYoq: "ключ для картинок не задан",
     koverKalitIshlamadi: "ключ не работает",
     koverLimit: "лимит исчерпан",
+    koverBilling: "в аккаунте Google не включён биллинг для картинок",
     koverRad: "запрос отклонён",
     koverJavobYoq: "сервис не ответил",
     koverBuzuq: "непонятный ответ",
@@ -199,6 +203,8 @@ const LOCALES = {
     postStageEditorFail: "📝 <b>Редактор:</b> переписать\n{reasons}",
     postStageEditorUnclear: "📝 <b>Ответ редактора</b> непонятен — пост оставлен как есть",
     postNoReason: "• причина не названа",
+    postStageTooLong: "📏 Пост получился длинным: {length} символов — под картинкой помещается до {max}, сокращаю",
+    postTooLong: "⚠️ <i>Пост не уместился в {max} символов — картинка и текст уйдут отдельными сообщениями.</i>",
     postLimitReached: "⚠️ <i>Переписано {max} раза, редактор всё равно не принял. Последний вариант:</i>",
     postAgentMissing:
       "Не удалось прочитать файл характера: <code>agentlar/{file}</code> — {reason}.\n" +
@@ -301,6 +307,7 @@ const LOCALES = {
     koverKalitYoq: "no image key configured",
     koverKalitIshlamadi: "the key didn't work",
     koverLimit: "quota spent",
+    koverBilling: "billing for images isn't enabled on the Google account",
     koverRad: "the request was refused",
     koverJavobYoq: "the service didn't answer",
     koverBuzuq: "the answer made no sense",
@@ -308,6 +315,8 @@ const LOCALES = {
     postStageEditorFail: "📝 <b>The editor:</b> rewrite\n{reasons}",
     postStageEditorUnclear: "📝 <b>The editor's answer</b> made no sense — the post is left as it is",
     postNoReason: "• no reason given",
+    postStageTooLong: "📏 The post came out long: {length} characters — a caption fits up to {max}, shortening it",
+    postTooLong: "⚠️ <i>The post didn't fit into {max} characters — the image and the text go as separate messages.</i>",
     postLimitReached: "⚠️ <i>Rewritten {max} times and the editor still said no. The last version:</i>",
     postAgentMissing:
       "Couldn't read the character file: <code>agentlar/{file}</code> — {reason}.\n" +
