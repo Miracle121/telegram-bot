@@ -14,6 +14,8 @@ import * as ai from "./ai.js";
 import * as bilim from "./bilim.js";
 import * as agentlar from "./agentlar.js";
 import * as kover from "./kover.js";
+import * as kanallar from "./kanallar.js";
+import * as postlar from "./postlar.js";
 import {
   aiErrorText,
   koverReasonText,
@@ -21,6 +23,7 @@ import {
   detectLanguage,
   isSupported,
   languageKeyboard,
+  postKeyboard,
   t,
 } from "./i18n.js";
 
@@ -69,6 +72,7 @@ function isDuplicate(updateId) {
 async function handleUpdate(update) {
   if (update.callback_query) return handleCallbackQuery(update.callback_query);
   if (update.message) return handleMessage(update.message);
+  if (update.my_chat_member) return handleMyChatMember(update.my_chat_member);
   // Boshqa turdagi update'lar hozircha e'tiborsiz qoldiriladi
 }
 
@@ -244,15 +248,39 @@ async function handlePost(chatId, user, lang, topic) {
 
     // Rasm avval ketadi, matn keyin: post izohga sig'maydi (izoh chegarasi 1024 belgi).
     // Rasm yuborilmasa post baribir yetib boradi — bitta kover uchun ish yo'qolmasin.
+    let photoFileId = "";
     if (result.kover) {
       try {
-        await tg.sendPhoto(chatId, result.kover.buffer);
+        const sentPhoto = await tg.sendPhoto(chatId, result.kover.buffer);
+        // Eng katta o'lcham oxirida turadi. Kanalga shu id bilan yuboriladi — qayta yuklanmaydi.
+        photoFileId = sentPhoto?.photo?.at(-1)?.file_id ?? "";
       } catch (error) {
         log.warn("kover yuborilmadi", { userId: user.id, error: error.message });
       }
     }
 
-    await tg.sendRichText(chatId, result.post + (result.truncated ? t(lang, "aiTruncated") : ""));
+    const shown = result.post + (result.truncated ? t(lang, "aiTruncated") : "");
+    const kanal = kanallar.ol(user.id);
+
+    if (!kanal) {
+      await tg.sendRichText(chatId, shown);
+    } else {
+      // Kanal ulangan — post tugmalar bosilguncha saqlanadi.
+      const id = postlar.saqla({
+        userId: user.id,
+        chatId,
+        lang,
+        userName: user.first_name ?? "",
+        topic,
+        material: result.material.text,
+        post: result.post,
+        photoFileId,
+        photoBuffer: photoFileId ? null : (result.kover?.buffer ?? null),
+        messageId: 0,
+      });
+      const sent = await tg.sendRichText(chatId, shown, { reply_markup: postKeyboard(lang, id) });
+      postlar.ol(id).messageId = sent.at(-1)?.message_id ?? 0;
+    }
 
     log.info("post yozildi", {
       userId: user.id,
@@ -364,9 +392,272 @@ function toolTrace(lang, answer) {
   return lines.join("\n");
 }
 
+// ---------------------------------------------------------------
+// Post tagidagi tugmalar: chop etish / qayta yozish / bekor qilish
+// ---------------------------------------------------------------
+
+// Har qayta yozish — yozuvchi + muharrir, ya'ni pul. Uchtadan ko'p kerak bo'lsa,
+// muammo yozishda emas, mavzuda yoki materialda.
+const POST_MAX_USER_REWRITES = 3;
+
+/** Callback javobi. Kechikkan tugma (15 s dan eski) xato beradi — bu ishni to'xtatmasin. */
+const answerQuery = (query, extra = {}) => tg.answerCallbackQuery(query.id, extra).catch(() => {});
+
+async function handlePostButton(query, chatId) {
+  const [, action, id = ""] = query.data.split(":");
+  const user = query.from;
+  const lang = store.getLanguage(user.id) ?? detectLanguage(user.language_code);
+  const messageId = query.message.message_id;
+  const entry = postlar.ol(id);
+
+  // Qayta yozishdan keyin eski xabarda tugma qolib ketgan bo'lsa ham shu yerga tushadi:
+  // amaldagi tugmalar faqat postning oxirgi xabarida.
+  if (!entry || entry.messageId !== messageId) {
+    await answerQuery(query, { text: t(lang, "postExpired"), show_alert: true });
+    await tg.editMessageReplyMarkup(chatId, messageId).catch(() => {});
+    return;
+  }
+
+  // Shaxsiy chatda begona tugmani ko'rmaydi, lekin callback_data soxtalashtirilishi mumkin.
+  if (entry.userId !== user.id) {
+    await answerQuery(query, { text: t(lang, "postNotYours"), show_alert: true });
+    return;
+  }
+
+  // Ikki marta bosish yoki qayta yozish paytida chop etish — ikkalasi ham shu yerda to'xtaydi.
+  if (entry.holat !== "kutmoqda") {
+    await answerQuery(query, { text: t(lang, "postInProgress") });
+    return;
+  }
+
+  if (action === "pub") return publishPost(query, id, entry, lang);
+  if (action === "re") return rewritePost(query, id, entry, lang);
+  if (action === "no") return cancelPost(query, id, entry, lang);
+  await answerQuery(query);
+}
+
+async function publishPost(query, id, entry, lang) {
+  // Kanal tugma chizilgandan keyin uzilgan bo'lishi mumkin — shuning uchun qayta tekshiriladi.
+  const kanal = kanallar.ol(entry.userId);
+  if (!kanal) {
+    await answerQuery(query, { text: t(lang, "postNoChannel"), show_alert: true });
+    return;
+  }
+
+  // Holat `await` dan oldin o'zgaradi: ikkinchi bosish shu qatordan keyin kelsa ham to'xtaydi.
+  entry.holat = "chiqarilmoqda";
+  await answerQuery(query, { text: t(lang, "postPublishing") });
+
+  let firstMessageId = 0;
+  try {
+    const photo = entry.photoFileId || entry.photoBuffer;
+    if (photo) {
+      // Rasm yuborilmasa post baribir chiqsin — shaxsiy chatdagi qoida bilan bir xil.
+      try {
+        const sentPhoto = await tg.sendPhoto(kanal.id, photo);
+        firstMessageId = sentPhoto?.message_id ?? 0;
+      } catch (error) {
+        log.warn("kanalga kover yuborilmadi", { userId: entry.userId, kanalId: kanal.id, error: error.message });
+      }
+    }
+
+    const sent = await tg.sendRichText(kanal.id, entry.post);
+    firstMessageId ||= sent[0]?.message_id ?? 0;
+  } catch (error) {
+    entry.holat = "kutmoqda";
+    log.error("post kanalga chiqmadi", { userId: entry.userId, kanalId: kanal.id, error: error.message });
+    await tg.sendMessage(entry.chatId, t(lang, "postPublishFailed", {
+      reason: tg.escapeHtml(error.description ?? error.message),
+    }));
+    return;
+  }
+
+  postlar.ochir(id);
+  await tg.editMessageReplyMarkup(entry.chatId, entry.messageId).catch(() => {});
+
+  const link = kanallar.havola(kanal, firstMessageId);
+  await tg.sendMessage(
+    entry.chatId,
+    t(lang, "postPublished", {
+      title: tg.escapeHtml(kanal.title),
+      link: link ? `\n<a href="${link}">${t(lang, "postOpenLink")}</a>` : "",
+    }),
+    { reply_parameters: { message_id: entry.messageId, allow_sending_without_reply: true } },
+  );
+
+  log.info("post kanalga chiqdi", {
+    userId: entry.userId,
+    kanalId: kanal.id,
+    topic: entry.topic,
+    rewrites: entry.rewrites,
+  });
+}
+
+async function cancelPost(query, id, entry, lang) {
+  postlar.ochir(id);
+  await answerQuery(query);
+  await tg.editMessageReplyMarkup(entry.chatId, entry.messageId).catch(() => {});
+  await tg.sendMessage(entry.chatId, t(lang, "postCancelled"), {
+    reply_parameters: { message_id: entry.messageId, allow_sending_without_reply: true },
+  });
+  log.info("post bekor qilindi", { userId: entry.userId, topic: entry.topic });
+}
+
+/**
+ * Postni qayta yozadi. Material va kover saqlangani ishlatiladi — narxi faqat
+ * yozuvchi + muharrir (`agentlar.qaytaYoz`). Post ID o'zgarmaydi, faqat tugmalar
+ * yangi xabarga ko'chadi.
+ */
+async function rewritePost(query, id, entry, lang) {
+  const chatId = entry.chatId;
+
+  if (!ai.enabled) {
+    await answerQuery(query, { text: t(lang, "aiDisabled"), show_alert: true });
+    return;
+  }
+
+  if (entry.rewrites >= POST_MAX_USER_REWRITES) {
+    await answerQuery(query, {
+      text: t(lang, "postRewriteLimit", { max: String(POST_MAX_USER_REWRITES) }),
+      show_alert: true,
+    });
+    return;
+  }
+
+  if (busyUsers.has(entry.userId)) {
+    await answerQuery(query, { text: t(lang, "aiBusy"), show_alert: true });
+    return;
+  }
+
+  busyUsers.add(entry.userId);
+  entry.holat = "yozilmoqda";
+  await answerQuery(query);
+
+  // Eski tugmalar darhol olinadi: qayta yozish paytida eski variant chop etilib ketmasin.
+  await tg.editMessageReplyMarkup(chatId, entry.messageId).catch(() => {});
+  await tg.sendMessage(chatId, t(lang, "postRewriteStart", {
+    round: String(entry.rewrites + 1),
+    max: String(POST_MAX_USER_REWRITES),
+  }));
+
+  const stopTyping = keepTyping(chatId);
+  const startedAt = Date.now();
+
+  try {
+    const result = await agentlar.qaytaYoz({
+      topic: entry.topic,
+      material: entry.material,
+      post: entry.post,
+      lang,
+      userName: entry.userName,
+      onStage: (stage) => sendStage(chatId, lang, stage),
+    });
+
+    if (result.verdict === "fail") {
+      await tg.sendRichText(chatId, t(lang, "postLimitReached", { max: String(result.maxRewrites) }));
+    }
+
+    entry.post = result.post;
+    entry.rewrites += 1;
+
+    const shown = result.post + (result.truncated ? t(lang, "aiTruncated") : "");
+    const sent = await tg.sendRichText(chatId, shown, { reply_markup: postKeyboard(lang, id) });
+    entry.messageId = sent.at(-1)?.message_id ?? 0;
+
+    log.info("post qayta yozildi", {
+      userId: entry.userId,
+      durationMs: Date.now() - startedAt,
+      topic: entry.topic,
+      round: entry.rewrites,
+      verdict: result.verdict,
+      editorRewrites: result.rewrites,
+      inputTokens: result.usage.input_tokens,
+      outputTokens: result.usage.output_tokens,
+    });
+  } catch (error) {
+    // Eski variant joyida qoladi va tugmalari qaytadi — foydalanuvchi uni chop eta oladi.
+    await tg.editMessageReplyMarkup(chatId, entry.messageId, postKeyboard(lang, id)).catch(() => {});
+
+    if (error instanceof agentlar.AgentError) {
+      log.error("agent fayli o'qilmadi", { userId: entry.userId, file: error.file, reason: error.reason });
+      await tg.sendMessage(chatId, t(lang, "postAgentMissing", {
+        file: tg.escapeHtml(error.file),
+        reason: tg.escapeHtml(error.reason),
+      }));
+      return;
+    }
+
+    if (!(error instanceof ai.AiError)) throw error;
+
+    log.error("qayta yozish xatosi", { userId: entry.userId, code: error.code, error: error.message });
+    await tg.sendMessage(chatId, aiErrorText(lang, error.code));
+  } finally {
+    entry.holat = "kutmoqda";
+    stopTyping();
+    busyUsers.delete(entry.userId);
+  }
+}
+
+// ---------------------------------------------------------------
+// Kanal ulash: bot kanalga qo'shilganda yoki chiqarilganda
+// ---------------------------------------------------------------
+
+/** Foydalanuvchiga xabar. U botga hech yozmagan bo'lsa Telegram 403 beradi — bu xato emas. */
+async function notify(userId, text) {
+  await tg.sendMessage(userId, text).catch((error) => {
+    log.warn("xabar yetmadi", { userId, error: error.message });
+  });
+}
+
+/**
+ * `my_chat_member` — botning biror chatdagi holati o'zgardi.
+ *
+ * Faqat kanallar qiziq. Bot «Post joylash» huquqi bilan admin bo'lsa, kanal uni qo'shgan
+ * odamga bog'lanadi: botni kanalga faqat o'sha kanalning admini qo'sha oladi.
+ * Huquq olinsa yoki bot chiqarilsa — kanal kimga bog'langan bo'lsa, hammasidan uziladi.
+ */
+async function handleMyChatMember(update) {
+  const chat = update.chat;
+  if (chat?.type !== "channel") return;
+
+  const from = update.from;
+  const member = update.new_chat_member ?? {};
+  const lang = store.getLanguage(from.id) ?? detectLanguage(from.language_code);
+  const title = tg.escapeHtml(chat.title ?? "");
+  const canPost = member.status === "administrator" && member.can_post_messages === true;
+
+  if (canPost) {
+    if (!kanallar.ruxsat(from.id)) {
+      log.warn("kanal ulashga ruxsat yo'q", { userId: from.id, kanalId: chat.id });
+      await notify(from.id, t(lang, "kanalRuxsatYoq"));
+      return;
+    }
+
+    kanallar.ula(from.id, chat);
+    log.info("kanal ulandi", { userId: from.id, kanalId: chat.id });
+    await notify(from.id, t(lang, "kanalUlandi", { title }));
+    return;
+  }
+
+  const uzildi = kanallar.uz(chat.id);
+  if (uzildi.length > 0) log.info("kanal uzildi", { kanalId: chat.id, status: member.status });
+
+  // Admin, lekin huquqsiz: botni qo'shgan odamga nima yetishmayotganini aytamiz.
+  if (member.status === "administrator") {
+    await notify(from.id, t(lang, "kanalHuquqYoq", { title }));
+    return;
+  }
+
+  for (const userId of uzildi) {
+    await notify(userId, t(store.getLanguage(userId) ?? lang, "kanalUzildi", { title }));
+  }
+}
+
 async function handleCallbackQuery(query) {
   const data = query.data ?? "";
   const chatId = query.message?.chat?.id;
+
+  if (data.startsWith("post:") && chatId) return handlePostButton(query, chatId);
 
   if (!data.startsWith("lang:") || !chatId) {
     await tg.answerCallbackQuery(query.id);
@@ -506,6 +797,11 @@ async function start() {
       log.warn(`agentlar xarakter fayllari yo'q (${config.agentlar.dir}/) — /post ishlamaydi`);
     }
   }
+
+  log.info("kanallar o'qildi", {
+    ulangan: kanallar.soni(),
+    ulashRuxsati: config.kanal.adminIds.length > 0 ? `${config.kanal.adminIds.length} ta admin` : "hamma",
+  });
 
   if (config.webhookUrl) {
     try {

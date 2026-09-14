@@ -50,7 +50,8 @@ const LOCALES = {
         "tartibi. Fayllar <code>bilim/</code> papkasida turadi.\n\n") +
       searchLine("Kerak bo'lganda internetdan qidirib topaman — narxlar, yangiliklar, " +
         "raqobatchilar. Manbani havola bilan ko'rsataman.\n\n") +
-      "/post [mavzu] — mavzu bo'yicha post yozib beraman\n" +
+      "/post [mavzu] — mavzu bo'yicha post yozib beraman. Botni kanalingizga admin " +
+      "qilib qo'shsangiz, post tagida «Kanalga chop etish» tugmasi chiqadi\n" +
       "/new — suhbatni noldan boshlash\n" +
       "/lang — tilni o'zgartirish\n" +
       "/start — tanishtiruv xabari\n" +
@@ -92,6 +93,30 @@ const LOCALES = {
     postAgentMissing:
       "Xarakter fayli o'qilmadi: <code>agentlar/{file}</code> — {reason}.\n" +
       "Faylni joyiga qo'yib qayta urinib ko'ring.",
+    btnPublish: "📢 Kanalga chop etish",
+    btnRewrite: "🔄 Qayta yozish",
+    btnCancel: "❌ Bekor qilish",
+    postPublishing: "Kanalga yuborilmoqda…",
+    postPublished: "✅ Post <b>{title}</b> kanaliga chiqdi.{link}",
+    postOpenLink: "Postni ochish",
+    postPublishFailed:
+      "⚠️ Kanalga chiqarib bo'lmadi: <code>{reason}</code>\n" +
+      "Bot kanalda admin va «Post joylash» huquqi borligini tekshiring. Tugmalar joyida qoldi.",
+    postCancelled: "❌ Bekor qilindi — post kanalga chiqarilmadi.",
+    postExpired: "Bu post eskirgan (24 soat o'tgan yoki bot qayta ishga tushgan). /post ni qaytadan yozing.",
+    postNotYours: "Bu tugma sizning postingiz uchun emas.",
+    postInProgress: "Bu post ustida ish ketyapti — bir lahza.",
+    postNoChannel: "Kanal ulanmagan. Botni kanalingizga «Post joylash» huquqi bilan admin qilib qo'shing.",
+    postRewriteStart: "🔄 Qayta yozilmoqda ({round}/{max})…",
+    postRewriteLimit: "Bu post {max} marta qayta yozildi. Boshqacha natija kerak bo'lsa, yangi /post bilan boshlang.",
+    kanalUlandi:
+      "✅ <b>{title}</b> kanali ulandi.\n" +
+      "Endi /post natijasi tagida «Kanalga chop etish» tugmasi chiqadi.",
+    kanalHuquqYoq:
+      "⚠️ Bot <b>{title}</b> kanalida admin, lekin «Post joylash» huquqi yo'q. " +
+      "Shu huquqni bering — kanal o'zi ulanadi.",
+    kanalUzildi: "Bot <b>{title}</b> kanalidan chiqarildi — kanal uzildi.",
+    kanalRuxsatYoq: "Bu botda kanal ulash faqat bot egasi uchun yoqilgan.",
   },
   ru: {
     chooseLanguage: "Выберите язык:",
@@ -113,7 +138,8 @@ const LOCALES = {
         "Файлы лежат в папке <code>bilim/</code>.\n\n") +
       searchLine("Когда нужно, ищу в интернете — цены, новости, конкуренты. " +
         "Источник указываю ссылкой.\n\n") +
-      "/post [тема] — напишу пост по теме\n" +
+      "/post [тема] — напишу пост по теме. Добавьте бота админом в свой канал — " +
+      "под постом появится кнопка «Опубликовать в канал»\n" +
       "/new — начать разговор заново\n" +
       "/lang — сменить язык\n" +
       "/start — приветственное сообщение\n" +
@@ -155,6 +181,30 @@ const LOCALES = {
     postAgentMissing:
       "Не удалось прочитать файл характера: <code>agentlar/{file}</code> — {reason}.\n" +
       "Положите файл на место и попробуйте снова.",
+    btnPublish: "📢 Опубликовать в канал",
+    btnRewrite: "🔄 Переписать",
+    btnCancel: "❌ Отменить",
+    postPublishing: "Отправляю в канал…",
+    postPublished: "✅ Пост опубликован в канале <b>{title}</b>.{link}",
+    postOpenLink: "Открыть пост",
+    postPublishFailed:
+      "⚠️ Не удалось опубликовать: <code>{reason}</code>\n" +
+      "Проверьте, что бот — админ канала с правом «Публикация сообщений». Кнопки остались на месте.",
+    postCancelled: "❌ Отменено — пост в канал не отправлен.",
+    postExpired: "Этот пост устарел (прошло 24 часа или бот перезапускался). Отправьте /post заново.",
+    postNotYours: "Эта кнопка не для вашего поста.",
+    postInProgress: "Над этим постом уже идёт работа — секунду.",
+    postNoChannel: "Канал не подключён. Добавьте бота админом в свой канал с правом «Публикация сообщений».",
+    postRewriteStart: "🔄 Переписываю ({round}/{max})…",
+    postRewriteLimit: "Этот пост переписан {max} раза. Нужен другой результат — начните новый /post.",
+    kanalUlandi:
+      "✅ Канал <b>{title}</b> подключён.\n" +
+      "Теперь под результатом /post появится кнопка «Опубликовать в канал».",
+    kanalHuquqYoq:
+      "⚠️ Бот — админ канала <b>{title}</b>, но без права «Публикация сообщений». " +
+      "Дайте это право — канал подключится сам.",
+    kanalUzildi: "Бот удалён из канала <b>{title}</b> — канал отключён.",
+    kanalRuxsatYoq: "В этом боте подключать канал может только владелец.",
   },
   en: {
     chooseLanguage: "Choose your language:",
@@ -176,7 +226,8 @@ const LOCALES = {
         "The files live in the <code>bilim/</code> folder.\n\n") +
       searchLine("When it helps, I'll search the web — prices, news, competitors. " +
         "I'll link the source.\n\n") +
-      "/post [topic] — I'll write a post on a topic\n" +
+      "/post [topic] — I'll write a post on a topic. Add the bot to your channel as an " +
+      "admin and a «Publish to channel» button appears under the post\n" +
       "/new — start a fresh conversation\n" +
       "/lang — change language\n" +
       "/start — the intro message\n" +
@@ -218,6 +269,30 @@ const LOCALES = {
     postAgentMissing:
       "Couldn't read the character file: <code>agentlar/{file}</code> — {reason}.\n" +
       "Put the file back and try again.",
+    btnPublish: "📢 Publish to channel",
+    btnRewrite: "🔄 Rewrite",
+    btnCancel: "❌ Cancel",
+    postPublishing: "Sending to the channel…",
+    postPublished: "✅ The post is live in <b>{title}</b>.{link}",
+    postOpenLink: "Open the post",
+    postPublishFailed:
+      "⚠️ Couldn't publish: <code>{reason}</code>\n" +
+      "Check that the bot is a channel admin allowed to post messages. The buttons are still there.",
+    postCancelled: "❌ Cancelled — the post was not published.",
+    postExpired: "This post has expired (24 hours passed or the bot restarted). Send /post again.",
+    postNotYours: "This button isn't for your post.",
+    postInProgress: "This post is already being worked on — one moment.",
+    postNoChannel: "No channel connected. Add the bot to your channel as an admin allowed to post messages.",
+    postRewriteStart: "🔄 Rewriting ({round}/{max})…",
+    postRewriteLimit: "This post was rewritten {max} times. For something different, start a new /post.",
+    kanalUlandi:
+      "✅ Channel <b>{title}</b> connected.\n" +
+      "From now on a «Publish to channel» button appears under each /post result.",
+    kanalHuquqYoq:
+      "⚠️ The bot is an admin of <b>{title}</b> but isn't allowed to post messages. " +
+      "Grant that right and the channel connects by itself.",
+    kanalUzildi: "The bot was removed from <b>{title}</b> — the channel is disconnected.",
+    kanalRuxsatYoq: "In this bot only the owner can connect a channel.",
   },
 };
 
@@ -260,6 +335,22 @@ export function languageKeyboard() {
     inline_keyboard: Object.entries(LANGUAGES).map(([code, { flag, label }]) => [
       { text: `${flag} ${label}`, callback_data: `lang:${code}` },
     ]),
+  };
+}
+
+/**
+ * Post tagidagi tugmalar. `callback_data` 64 baytdan oshmasligi kerak — shuning uchun
+ * postning o'zi emas, faqat qisqa ID (`postlar.js`).
+ */
+export function postKeyboard(language, id) {
+  return {
+    inline_keyboard: [
+      [{ text: t(language, "btnPublish"), callback_data: `post:pub:${id}` }],
+      [
+        { text: t(language, "btnRewrite"), callback_data: `post:re:${id}` },
+        { text: t(language, "btnCancel"), callback_data: `post:no:${id}` },
+      ],
+    ],
   };
 }
 

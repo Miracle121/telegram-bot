@@ -42,6 +42,12 @@ const sent = []; // sendMessage / answerCallbackQuery chaqiruvlari
 const PNG_SIGNATURE = Buffer.from([0x89, 0x50, 0x4e, 0x47]);
 const JPEG_SIGNATURE = Buffer.from([0xff, 0xd8, 0xff]);
 
+// Xabar ID'lari `sent` tozalansa ham takrorlanmasin: tugmalar aynan ID bo'yicha ishlaydi.
+let nextMessageId = 1000;
+
+// Shu chatga yuborilgan hamma narsa 400 bilan qaytadi — "bot kanalda admin emas" holati.
+let failChatId = null;
+
 const api = http.createServer((req, res) => {
   // Bayt sifatida yig'amiz: sendPhoto multipart yuboradi, uni satrga aylantirsak buziladi.
   const chunks = [];
@@ -49,28 +55,40 @@ const api = http.createServer((req, res) => {
   req.on("end", () => {
     const raw = Buffer.concat(chunks);
     const method = req.url.split("/").pop();
+    const isJson = (req.headers["content-type"] ?? "").includes("application/json");
 
-    const payload = method === "sendPhoto"
+    // sendPhoto ikki xil keladi: fayl (multipart) yoki file_id (JSON — kanalga chop etishda).
+    const payload = method === "sendPhoto" && !isJson
       ? {
           bytes: raw.length,
           isPng: raw.includes(PNG_SIGNATURE),
           isJpeg: raw.includes(JPEG_SIGNATURE),
         }
       : (raw.length > 0 ? JSON.parse(raw.toString()) : {});
-    sent.push({ method, payload });
 
+    if (failChatId !== null && payload.chat_id === failChatId) {
+      sent.push({ method, payload, failed: true });
+      res.writeHead(400, { "Content-Type": "application/json" });
+      res.end(JSON.stringify({ ok: false, error_code: 400, description: "Bad Request: need administrator rights in the channel chat" }));
+      return;
+    }
+
+    const messageId = nextMessageId++;
     const results = {
       getMe: { id: 1, is_bot: true, username: "smoke_test_bot" },
-      sendMessage: { message_id: sent.length },
-      sendPhoto: { message_id: sent.length },
+      sendMessage: { message_id: messageId },
+      sendPhoto: { message_id: messageId, photo: [{ file_id: "kichik_id" }, { file_id: "soxta_file_id" }] },
       answerCallbackQuery: true,
       editMessageReplyMarkup: true,
       sendChatAction: true,
       setWebhook: true,
     };
 
+    const result = results[method] ?? true;
+    sent.push({ method, payload, result });
+
     res.writeHead(200, { "Content-Type": "application/json" });
-    res.end(JSON.stringify({ ok: true, result: results[method] ?? true }));
+    res.end(JSON.stringify({ ok: true, result }));
   });
 });
 
@@ -828,6 +846,284 @@ check("bitta rasm yuborildi", sent.filter((c) => c.method === "sendPhoto").lengt
 
   check("KOVER=off da vosita e'lon qilinmadi", !names.includes("kover_rasm"), `(${names.join(", ")})`);
   check("boshqa vositalar joyida qoldi", names.includes("bilim_qidiruv"), `(${names.join(", ")})`);
+}
+
+// ---------------------------------------------------------------
+// 6j. Kanalga chop etish — post tagidagi tugmalar
+// ---------------------------------------------------------------
+
+/** Post tugmalari bor oxirgi xabar. */
+const keyboardMessage = () =>
+  [...sent].reverse().find((c) =>
+    c.method === "sendMessage" &&
+    String(c.payload.reply_markup?.inline_keyboard?.[0]?.[0]?.callback_data ?? "").startsWith("post:"));
+
+const hasPostButtons = () =>
+  sent.some((c) => JSON.stringify(c.payload?.reply_markup ?? "").includes("post:"));
+
+check("kanal ulanmaganda tugma chiqmadi", !hasPostButtons());
+
+const KANAL = { id: -1001234567890, type: "channel", title: "Test <kanal>", username: "test_kanal" };
+
+/** Botning kanaldagi holati o'zgargani haqidagi update. */
+const memberUpdate = (updateId, chat, status, rights = {}, fromId = 555) => ({
+  update_id: updateId,
+  my_chat_member: {
+    chat,
+    from: { id: fromId, first_name: "Ali", language_code: "uz" },
+    date: 0,
+    old_chat_member: { status: "left", user: { id: 1, is_bot: true } },
+    new_chat_member: { status, user: { id: 1, is_bot: true }, ...rights },
+  },
+});
+
+/** Post tugmasini bosish. */
+const press = (updateId, data, messageId, fromId = 555) => ({
+  update_id: updateId,
+  callback_query: {
+    id: `cb${updateId}`,
+    from: { id: fromId, first_name: "Ali", language_code: "uz" },
+    data,
+    message: { message_id: messageId, chat: { id: 555, type: "private" } },
+  },
+});
+
+const toChannel = (method) => sent.filter((c) => c.method === method && c.payload?.chat_id === KANAL.id && !c.failed);
+const lastAnswer = () => [...sent].reverse().find((c) => c.method === "answerCallbackQuery")?.payload.text ?? "";
+const kanallarFile = () => {
+  try {
+    return JSON.parse(fs.readFileSync(path.join(DATA_DIR, "kanallar.json"), "utf8"));
+  } catch {
+    return {};
+  }
+};
+
+/** Tugmali /post: kutilgan xabarlar soni + tugmalar chiqqach ID va xabar raqamini qaytaradi. */
+async function postWithButtons(updateId, topic, queue, expected) {
+  aiQueue = queue;
+  await postCommand(message(updateId, `/post ${topic}`), expected);
+  await waitFor(() => keyboardMessage());
+  const msg = keyboardMessage();
+  return {
+    id: msg.payload.reply_markup.inline_keyboard[0][0].callback_data.split(":")[2],
+    messageId: msg.result.message_id,
+    msg,
+  };
+}
+
+const simpleQueue = (text) => [
+  aiBody([{ type: "text", text: "Material." }]),
+  aiBody([{ type: "text", text }]),
+  aiBody([{ type: "text", text: "O'TDI" }]),
+];
+
+// --- Guruh — e'tiborsiz ---
+sent.length = 0;
+await post(memberUpdate(800, { id: -100555, type: "supergroup", title: "Guruh" }, "administrator", { can_post_messages: true }));
+check("guruhga qo'shilish e'tiborsiz qoldi", sent.length === 0 && !kanallarFile()["555"], `(${sent.length})`);
+
+// --- Admin, lekin post joylash huquqisiz ---
+sent.length = 0;
+await post(memberUpdate(801, KANAL, "administrator", { can_post_messages: false }));
+check("huquqsiz adminlik aytildi", lastText().includes("isn't allowed to post"));
+check("huquqsiz kanal ulanmadi", !kanallarFile()["555"]);
+
+// --- To'liq huquq bilan: kanal ulanadi ---
+sent.length = 0;
+await post(memberUpdate(802, KANAL, "administrator", { can_post_messages: true }));
+check("kanal ulangani aytildi", lastText().includes("connected"));
+check("kanal nomi xavfsiz ko'rsatildi", lastText().includes("Test &lt;kanal&gt;"));
+check("kanal diskka yozildi", kanallarFile()["555"]?.id === KANAL.id, JSON.stringify(kanallarFile()));
+
+// --- /post endi tugmalar bilan ---
+koverResponse = { status: 200, kind: "png" };
+{
+  const { id, messageId, msg } = await postWithButtons(803, "kanal", [
+    aiBody([{ type: "text", text: "Material." }]),
+    koverUse("kv_k1"),
+    aiBody([{ type: "text", text: "Kanal uchun post." }]),
+    aiBody([{ type: "text", text: "O'TDI" }]),
+  ], 5);
+
+  const rows = msg.payload.reply_markup.inline_keyboard;
+  const datas = rows.flat().map((b) => b.callback_data);
+  check("tugmalar post matni tagida", msg.payload.text.includes("Kanal uchun post"));
+  check("uchta tugma: 1 + 2 qator", rows.length === 2 && rows[0].length === 1 && rows[1].length === 2);
+  check(
+    "tugma ma'lumoti to'g'ri va 64 baytdan kichik",
+    datas.every((d) => /^post:(pub|re|no):[\w-]{8}$/.test(d) && Buffer.byteLength(d) <= 64),
+    datas.join(" "),
+  );
+  check("tugmalar inglizcha", rows[0][0].text.includes("Publish to channel"));
+
+  // Begona foydalanuvchi
+  sent.length = 0;
+  await post(press(804, `post:pub:${id}`, messageId, 777));
+  // 777 til tanlamagan — javob uning language_code (uz) bo'yicha.
+  check("begona odam chop eta olmadi", lastAnswer().includes("sizning postingiz uchun emas"), `(${lastAnswer()})`);
+  check("begonadan kanalga hech narsa ketmadi", toChannel("sendMessage").length === 0);
+
+  // Ikki marta tez bosish — bitta post
+  sent.length = 0;
+  await Promise.all([
+    post(press(805, `post:pub:${id}`, messageId)),
+    post(press(806, `post:pub:${id}`, messageId)),
+  ]);
+  await waitFor(() => allText().includes("is live"));
+  check("ikki bosishda kanalga bitta post ketdi", toChannel("sendMessage").length === 1, `(${toChannel("sendMessage").length})`);
+  check("kanalga post matni ketdi", toChannel("sendMessage")[0]?.payload.text === "Kanal uchun post.");
+  check("kanalga kover file_id bilan ketdi", toChannel("sendPhoto")[0]?.payload.photo === "soxta_file_id");
+  check("kanalda kover postdan oldin", sent.indexOf(toChannel("sendPhoto")[0]) < sent.indexOf(toChannel("sendMessage")[0]));
+  check(
+    "chop etilgach tugmalar olindi",
+    sent.some((c) => c.method === "editMessageReplyMarkup" && c.payload.message_id === messageId),
+  );
+  const photoId = toChannel("sendPhoto")[0]?.result?.message_id;
+  check("tasdiqda kanaldagi postga havola bor", allText().includes(`https://t.me/test_kanal/${photoId}`));
+
+  // Chop etilgandan keyin yana bosish
+  sent.length = 0;
+  await post(press(807, `post:pub:${id}`, messageId));
+  check("chop etilgan post eskirgan deb javob berdi", lastAnswer().includes("expired"));
+  check("qayta bosishda kanalga hech narsa ketmadi", toChannel("sendMessage").length === 0);
+}
+
+// --- Bekor qilish ---
+{
+  const { id, messageId } = await postWithButtons(810, "bekor", simpleQueue("Bekor post."), 4);
+
+  sent.length = 0;
+  await post(press(811, `post:no:${id}`, messageId));
+  check("bekor qilindi deb aytildi", lastText().includes("Cancelled"));
+  check("bekor qilishda tugmalar olindi", sent.some((c) => c.method === "editMessageReplyMarkup" && c.payload.message_id === messageId));
+  check("bekor qilishda kanalga hech narsa ketmadi", toChannel("sendMessage").length === 0);
+
+  sent.length = 0;
+  await post(press(812, `post:pub:${id}`, messageId));
+  check("bekor qilingan postni chop etib bo'lmadi", lastAnswer().includes("expired") && toChannel("sendMessage").length === 0);
+}
+
+// --- Noma'lum ID ---
+sent.length = 0;
+await post(press(813, "post:pub:yoqIDyoq", 1));
+check("noma'lum ID eskirgan deb javob berdi", lastAnswer().includes("expired"));
+
+// --- Qayta yozish ---
+{
+  const { id, messageId } = await postWithButtons(820, "qayta", simpleQueue("Birinchi variant K."), 4);
+
+  sent.length = 0;
+  aiRequests.length = 0;
+  aiQueue = [
+    aiBody([{ type: "text", text: "Ikkinchi variant K." }]),
+    aiBody([{ type: "text", text: "O'TDI" }]),
+  ];
+  await post(press(821, `post:re:${id}`, messageId));
+  await waitFor(() => keyboardMessage()?.payload.text.includes("Ikkinchi variant K."));
+  const fresh = keyboardMessage();
+
+  check("qayta yozish faqat yozuvchi + muharrir", aiRequests.length === 2, `(${aiRequests.length} ta so'rov)`);
+  check("material qayta yig'ilmadi", !aiRequests.some((r) => systemText(r).includes("material-gathering")));
+  check("qayta yozishda yozuvchi ishladi", systemText(aiRequests[0]).includes("you are the writer"));
+  check("qayta yozishda muharrir tekshirdi", systemText(aiRequests[1]).includes("you are the editor"));
+  check(
+    "yozuvchi materialni ko'rdi",
+    String(aiRequests[0]?.messages?.[0]?.content ?? "").includes("Material."),
+  );
+  check(
+    "yozuvchi eski variantini ko'rdi",
+    aiRequests[0]?.messages?.[1]?.role === "assistant" && aiRequests[0]?.messages?.[1]?.content === "Birinchi variant K.",
+  );
+  check(
+    "yozuvchiga foydalanuvchi qoniqmagani aytildi",
+    String(aiRequests[0]?.messages?.[2]?.content ?? "").includes("not happy"),
+  );
+  check("qayta yozish boshlangani aytildi", allText().includes("Rewriting (1/3)"));
+  check("eski xabardan tugmalar olindi", sent.some((c) => c.method === "editMessageReplyMarkup" && c.payload.message_id === messageId));
+  check("yangi variant o'sha ID bilan tugmali", fresh.payload.reply_markup.inline_keyboard[0][0].callback_data === `post:pub:${id}`);
+
+  // Eski xabardagi tugma endi ishlamaydi
+  sent.length = 0;
+  await post(press(822, `post:pub:${id}`, messageId));
+  check("eski xabardagi tugma eskirgan", lastAnswer().includes("expired") && toChannel("sendMessage").length === 0);
+
+  // Yangi variant chop etiladi
+  sent.length = 0;
+  await post(press(823, `post:pub:${id}`, fresh.result.message_id));
+  await waitFor(() => allText().includes("is live"));
+  check("kanalga yangi variant chiqdi", toChannel("sendMessage")[0]?.payload.text === "Ikkinchi variant K.");
+}
+
+// --- Qayta yozish chegarasi: 3 martadan keyin to'xtaydi ---
+{
+  let { id, messageId } = await postWithButtons(830, "limit", simpleQueue("Variant 0."), 4);
+
+  for (let round = 1; round <= 3; round += 1) {
+    sent.length = 0;
+    aiQueue = [
+      aiBody([{ type: "text", text: `Variant ${round}.` }]),
+      aiBody([{ type: "text", text: "O'TDI" }]),
+    ];
+    await post(press(830 + round, `post:re:${id}`, messageId));
+    await waitFor(() => keyboardMessage()?.payload.text.includes(`Variant ${round}.`));
+    messageId = keyboardMessage().result.message_id;
+  }
+
+  sent.length = 0;
+  aiRequests.length = 0;
+  await post(press(835, `post:re:${id}`, messageId));
+  check("uch martadan keyin qayta yozilmadi", lastAnswer().includes("rewritten 3 times"));
+  check("chegarada model chaqirilmadi", aiRequests.length === 0, `(${aiRequests.length})`);
+}
+
+// --- Kanal xatosi: tugmalar joyida qoladi, keyin qayta urinish ishlaydi ---
+{
+  const { id, messageId } = await postWithButtons(840, "xato", simpleQueue("Xatoli post."), 4);
+
+  failChatId = KANAL.id;
+  sent.length = 0;
+  await post(press(841, `post:pub:${id}`, messageId));
+  await waitFor(() => allText().includes("Couldn't publish"));
+  check("kanal xatosi tushuntirildi", lastText().includes("need administrator rights"));
+  check(
+    "xatoda tugmalar olinmadi",
+    !sent.some((c) => c.method === "editMessageReplyMarkup" && c.payload.message_id === messageId),
+  );
+
+  failChatId = null;
+  sent.length = 0;
+  await post(press(842, `post:pub:${id}`, messageId));
+  await waitFor(() => allText().includes("is live"));
+  check("tuzatilgach qayta chop etildi", toChannel("sendMessage")[0]?.payload.text === "Xatoli post.");
+}
+
+// --- Bot kanaldan chiqarildi: kanal uziladi, tugmalar chiqmaydi ---
+sent.length = 0;
+await post(memberUpdate(850, KANAL, "left"));
+check("kanal uzilgani aytildi", lastText().includes("removed from"));
+check("kanal diskdan o'chdi", !kanallarFile()["555"]);
+
+aiQueue = simpleQueue("Uzilgandan keyingi post.");
+await postCommand(message(851, "/post uzildi"), 4);
+check("uzilgan kanalda tugma chiqmadi", !hasPostButtons() && lastText().includes("Uzilgandan keyingi post"));
+
+// --- ADMIN_IDS va havola — alohida jarayonda ---
+{
+  const kanalUrl = pathToFileURL(path.join(PROJECT_ROOT, "kanallar.js")).href;
+  const script =
+    `const k = await import(${JSON.stringify(kanalUrl)});` +
+    `console.log(JSON.stringify({ admin: k.ruxsat(111), begona: k.ruxsat(555),` +
+    ` yopiq: k.havola({ id: -1009876, username: "" }, 5), ochiq: k.havola({ id: -1001, username: "abc" }, 7) }));`;
+  const extraDir = fs.mkdtempSync(path.join(DATA_DIR, "admin-"));
+
+  const r = childJson(script, { ADMIN_IDS: "111, 222", DATA_DIR: extraDir });
+  check("ADMIN_IDS dagi odamga ruxsat", r.admin === true, JSON.stringify(r));
+  check("ADMIN_IDS da yo'q odamga ruxsat yo'q", r.begona === false);
+  check("yopiq kanal havolasi", r.yopiq === "https://t.me/c/9876/5", `(${r.yopiq})`);
+  check("ochiq kanal havolasi", r.ochiq === "https://t.me/abc/7", `(${r.ochiq})`);
+
+  const bad = childJson(script, { ADMIN_IDS: "ali,222", DATA_DIR: extraDir });
+  check("noto'g'ri ADMIN_IDS ushlandi", String(bad.xato ?? "").includes("ADMIN_IDS"));
 }
 
 // 7. /help tanlangan tilda

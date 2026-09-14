@@ -137,6 +137,18 @@ if (!Number.isInteger(koverTimeoutMs) || koverTimeoutMs < 5000) {
 // Shablon koverning pastiga yoziladigan ism.
 const koverBrand = (process.env.KOVER_BRAND ?? "Mrxone").trim();
 
+// --- Kanalga chop etish ---
+// Kanal `.env` da yozilmaydi: botni kanalga admin qilib qo'shgan odam o'sha kanalga
+// o'zi bog'lanadi. ADMIN_IDS ixtiyoriy — bo'sh bo'lsa har kim o'z kanalini ulay oladi,
+// to'ldirilsa faqat ro'yxatdagilar.
+const adminIdsRaw = (process.env.ADMIN_IDS ?? "").trim();
+const adminIds = adminIdsRaw
+  ? adminIdsRaw.split(",").map((part) => part.trim()).filter(Boolean)
+  : [];
+if (adminIds.some((id) => !/^\d{1,20}$/.test(id))) {
+  errors.push("ADMIN_IDS vergul bilan ajratilgan Telegram ID'lar bo'lishi kerak (masalan: 123456789,987654321).");
+}
+
 const port = Number.parseInt(process.env.PORT ?? "3000", 10);
 if (!Number.isInteger(port) || port < 1 || port > 65535) {
   errors.push("PORT 1 dan 65535 gacha butun son bo'lishi kerak.");
@@ -182,5 +194,8 @@ export const config = Object.freeze({
     model: koverModel,
     timeoutMs: koverTimeoutMs,
     brand: koverBrand,
+  }),
+  kanal: Object.freeze({
+    adminIds: Object.freeze(adminIds.map(Number)),
   }),
 });

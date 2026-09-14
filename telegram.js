@@ -122,17 +122,26 @@ const MAX_MESSAGE_LENGTH = 4096;
  *  - uzun matn bo'laklarga bo'linadi (imkon qadar abzas chegarasidan);
  *  - model noto'g'ri HTML yozib qo'ysa Telegram 400 qaytaradi — bunday holatda
  *    o'sha bo'lak formatlashsiz, oddiy matn sifatida qayta yuboriladi.
+ *
+ * `extra` (masalan tugmalar) faqat **oxirgi** bo'lakka qo'shiladi: tugma matnning
+ * tagida tursin. Yuborilgan xabarlar ro'yxati qaytadi.
  */
-export async function sendRichText(chatId, text) {
-  for (const chunk of splitText(text, MAX_MESSAGE_LENGTH)) {
+export async function sendRichText(chatId, text, extra = {}) {
+  const chunks = splitText(text, MAX_MESSAGE_LENGTH);
+  const sent = [];
+
+  for (const [index, chunk] of chunks.entries()) {
+    const own = index === chunks.length - 1 ? extra : {};
     try {
-      await sendMessage(chatId, chunk);
+      sent.push(await sendMessage(chatId, chunk, own));
     } catch (error) {
       const badHtml = error instanceof TelegramError && error.status === 400;
       if (!badHtml) throw error;
-      await sendMessage(chatId, chunk, { parse_mode: undefined });
+      sent.push(await sendMessage(chatId, chunk, { ...own, parse_mode: undefined }));
     }
   }
+
+  return sent;
 }
 
 /** Matnni chegaradan oshmaydigan bo'laklarga bo'ladi. */
@@ -164,8 +173,19 @@ export function splitText(text, limit = MAX_MESSAGE_LENGTH) {
  *
  * Qayta urinish yo'q: rasm katta, uni ikki marta yuborish trafik va vaqt.
  * Yiqilsa `bot.js` postni matn bo'lib yuboraveradi.
+ *
+ * `buffer` o'rniga satr berilsa — bu Telegram'dagi `file_id`: rasm qayta yuklanmaydi,
+ * oddiy JSON so'rov ketadi. Kanalga chop etishda shunday bo'ladi.
  */
 export async function sendPhoto(chatId, buffer, { caption = "", parseMode = "HTML" } = {}) {
+  if (typeof buffer === "string") {
+    return callApi("sendPhoto", {
+      chat_id: chatId,
+      photo: buffer,
+      ...(caption ? { caption, parse_mode: parseMode } : {}),
+    });
+  }
+
   const form = new FormData();
   form.append("chat_id", String(chatId));
   // Tur baytlardan aniqlanadi: shablon PNG, Gemini esa JPEG qaytaradi.
@@ -211,7 +231,8 @@ export const setWebhook = (url, secretToken) =>
     url,
     secret_token: secretToken,
     // Faqat kerakli update turlarini olamiz — ortiqcha trafik kesiladi
-    allowed_updates: ["message", "callback_query"],
+    // my_chat_member — botni kanalga qo'shish/chiqarish: kanal shu orqali ulanadi
+    allowed_updates: ["message", "callback_query", "my_chat_member"],
     max_connections: 40,
   });
 

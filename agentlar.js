@@ -178,6 +178,19 @@ function rewritePrompt(reasons) {
   ].join("\n");
 }
 
+// Foydalanuvchi "qayta yozish" tugmasini bosganda: sabab aytilmagan, faqat natija
+// yoqmagan. Shuning uchun "shu joyini tuzat" emas, "boshqacha yondash" deyiladi.
+function userRewritePrompt() {
+  return [
+    "The owner read this post and was not happy with its quality. They gave no specific",
+    "reason, so do not just polish the same text: write it again with a noticeably",
+    "different approach — a different opening, angle or structure — using the same",
+    "material and the same character file.",
+    "",
+    "The cover image already exists: do not call kover_rasm. Output only the post itself.",
+  ].join("\n");
+}
+
 /** Bir necha chaqiruvning token hisobini bitta obyektga yig'adi. */
 function addUsage(total, usage) {
   if (!usage) return;
@@ -206,7 +219,6 @@ export async function yozPost({ topic, lang, userName, onStage = () => {} }) {
   const editor = roleText("muharrir");
 
   const usage = { input_tokens: 0, output_tokens: 0 };
-  const maxRewrites = config.agentlar.maxRewrites;
 
   // 1-bosqich: material. Bu hozirgi `/post` ning o'zi — vositalar shu yerda ishlaydi.
   const material = await ai.ask({
@@ -218,8 +230,78 @@ export async function yozPost({ topic, lang, userName, onStage = () => {} }) {
   addUsage(usage, material.usage);
   await onStage({ type: "material", answer: material });
 
+  const result = await yozuvchiSikli({
+    topic,
+    materialText: material.text,
+    history: [{ role: "user", content: writerPrompt(topic, material.text) }],
+    writer,
+    editor,
+    lang,
+    userName,
+    onStage,
+    usage,
+  });
+
+  return { ...result, material };
+}
+
+/**
+ * Foydalanuvchi so'rovi bilan postni qayta yozadi ("qayta yozish" tugmasi).
+ *
+ * Material qayta yig'ilmaydi va internet qayta qidirilmaydi: yozuvchi saqlangan
+ * material matni va oldingi variantini ko'radi. Kover ham qayta yasalmaydi. Shu tufayli
+ * narxi butun oqimning bir qismi — faqat yozuvchi va muharrir.
+ *
+ * @param {object} params
+ * @param {string} params.topic
+ * @param {string} params.material material bosqichining matni
+ * @param {string} params.post     foydalanuvchiga yoqmagan variant
+ * @param {string} params.lang
+ * @param {string} params.userName
+ * @param {(stage: object) => void|Promise<void>} [params.onStage]
+ */
+export async function qaytaYoz({ topic, material, post, lang, userName, onStage = () => {} }) {
+  const writer = roleText("yozuvchi");
+  const editor = roleText("muharrir");
+
+  return yozuvchiSikli({
+    topic,
+    materialText: material,
+    history: [
+      { role: "user", content: writerPrompt(topic, material) },
+      { role: "assistant", content: post },
+      { role: "user", content: userRewritePrompt() },
+    ],
+    writer,
+    editor,
+    lang,
+    userName,
+    onStage,
+    usage: { input_tokens: 0, output_tokens: 0 },
+    koverDone: true,
+  });
+}
+
+/**
+ * Yozuvchi -> muharrir -> (qayta yoz) sikli. `yozPost` va `qaytaYoz` uchun umumiy.
+ *
+ * `koverDone` — kover oldin yasalgan: yozuvchi chaqirsa ham rad etiladi.
+ */
+async function yozuvchiSikli({
+  topic,
+  materialText,
+  history: startHistory,
+  writer,
+  editor,
+  lang,
+  userName,
+  onStage,
+  usage,
+  koverDone = false,
+}) {
+  const maxRewrites = config.agentlar.maxRewrites;
   const rounds = [];
-  let history = [{ role: "user", content: writerPrompt(topic, material.text) }];
+  let history = startHistory;
   let post = "";
   let truncated = false;
   // Kover bir marta yasaladi va qayta yozishda saqlanib qoladi: mavzu o'zgarmagan,
@@ -235,7 +317,7 @@ export async function yozPost({ topic, lang, userName, onStage = () => {} }) {
       userName,
       mode: "yozuvchi",
       roleText: writer,
-      koverDone: Boolean(kover),
+      koverDone: koverDone || Boolean(kover),
     });
     addUsage(usage, written.usage);
     post = written.text;
@@ -250,7 +332,7 @@ export async function yozPost({ topic, lang, userName, onStage = () => {} }) {
     // 3-bosqich: muharrir. Tarixsiz — u faqat mavzu, material va postni ko'radi,
     // yozuvchi bilan bahslashmaydi.
     const checked = await ai.ask({
-      history: [{ role: "user", content: editorPrompt(topic, material.text, post) }],
+      history: [{ role: "user", content: editorPrompt(topic, materialText, post) }],
       lang,
       userName,
       mode: "muharrir",
@@ -278,7 +360,6 @@ export async function yozPost({ topic, lang, userName, onStage = () => {} }) {
     post,
     truncated,
     kover,
-    material,
     verdict: last.verdict,
     reasons: last.reasons,
     rewrites: rounds.length - 1,
