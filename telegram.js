@@ -226,6 +226,11 @@ export const editMessageReplyMarkup = (chatId, messageId, replyMarkup = { inline
 
 export const getMe = () => callApi("getMe");
 
+export const getChat = (chatId) => callApi("getChat", { chat_id: chatId });
+
+export const getChatMember = (chatId, userId) =>
+  callApi("getChatMember", { chat_id: chatId, user_id: userId });
+
 export const setWebhook = (url, secretToken) =>
   callApi("setWebhook", {
     url,

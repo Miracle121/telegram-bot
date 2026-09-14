@@ -89,6 +89,13 @@ async function handleMessage(message) {
 
   const lang = savedLanguage;
 
+  // Kanaldan forward qilingan post — kanalni ulash urinishi bo'lishi mumkin.
+  // Ulanmasa (bot u kanalda admin emas) oddiy xabar sifatida davom etadi.
+  if (message.forward_origin?.type === "channel") {
+    const connected = await connectChannel(chatId, user, lang, message.forward_origin.chat.id, { quiet: true });
+    if (connected) return;
+  }
+
   if (typeof message.text !== "string") {
     await tg.sendMessage(chatId, t(lang, "onlyText"));
     return;
@@ -120,6 +127,21 @@ async function handleMessage(message) {
     case "lang":
       await tg.sendMessage(chatId, t(lang, "chooseLanguage"), { reply_markup: languageKeyboard() });
       return;
+
+    case "kanal": {
+      // "/kanal @nomi" yoki "/kanal -100..." — allaqachon admin bo'lgan kanalni ulash.
+      const ref = text.slice(command.length + 1).trim().split(/\s+/)[0] ?? "";
+      if (!ref) {
+        const kanal = kanallar.ol(user.id);
+        await tg.sendMessage(chatId, kanal
+          ? t(lang, "kanalHolati", { title: tg.escapeHtml(kanal.title) })
+          : t(lang, "kanalUsage"));
+        return;
+      }
+      const normalized = /^-?\d+$/.test(ref) ? Number(ref) : (ref.startsWith("@") ? ref : `@${ref}`);
+      await connectChannel(chatId, user, lang, normalized);
+      return;
+    }
 
     case "post": {
       // "/post mavzu" — buyruqdan keyingi hamma narsa mavzu
@@ -653,6 +675,74 @@ async function handleMyChatMember(update) {
   }
 }
 
+// Botning o'z ID'si — kanalda admin ekanini tekshirish uchun. Startda getMe dan olinadi.
+let botId = 0;
+
+/**
+ * Allaqachon admin bo'lgan kanalni qo'lda ulash: forward qilingan post yoki `/kanal`.
+ *
+ * `my_chat_member` faqat botning holati **o'zgarganda** keladi. Bot kanalga shu
+ * funksiyadan oldin qo'shilgan bo'lsa, u xabar hech qachon kelmaydi — shuning uchun
+ * bu yo'l kerak. Himoya Telegram'dan so'rab tekshiriladi, foydalanuvchining so'ziga emas:
+ *   1. bot kanalda «Post joylash» huquqi bilan adminmi
+ *   2. so'rayotgan odam o'sha kanalning egasi yoki adminimi
+ *
+ * `quiet` — forward holati: bot u kanalda admin bo'lmasa, bu shunchaki forward qilingan
+ * xabar, ulash urinishi emas. Xato aytilmaydi, xabar oddiy yo'lda davom etadi.
+ *
+ * @returns {Promise<boolean>} xabarga javob berildimi (ulandi yoki sababi aytildi)
+ */
+async function connectChannel(chatId, user, lang, ref, { quiet = false } = {}) {
+  const say = async (key, vars) => {
+    await tg.sendMessage(chatId, t(lang, key, vars));
+    return true;
+  };
+
+  let chat;
+  try {
+    chat = await tg.getChat(ref);
+  } catch (error) {
+    if (quiet) return false;
+    log.warn("kanal topilmadi", { userId: user.id, ref: String(ref), error: error.message });
+    return say("kanalTopilmadi");
+  }
+
+  if (chat.type !== "channel") return quiet ? false : say("kanalEmas");
+
+  const title = tg.escapeHtml(chat.title ?? "");
+
+  let botMember;
+  try {
+    botMember = await tg.getChatMember(chat.id, botId);
+  } catch {
+    botMember = { status: "left" };
+  }
+
+  const botIsAdmin = botMember.status === "administrator";
+  if (!botIsAdmin) return quiet ? false : say("kanalBotAdminEmas", { title });
+
+  // Shu kanal allaqachon ulangan bo'lsa, forward — oddiy xabar (masalan, AI'ga tahlil uchun).
+  if (quiet && kanallar.ol(user.id)?.id === chat.id) return false;
+
+  if (!kanallar.ruxsat(user.id)) return say("kanalRuxsatYoq");
+  if (botMember.can_post_messages !== true) return say("kanalHuquqYoq", { title });
+
+  let userMember;
+  try {
+    userMember = await tg.getChatMember(chat.id, user.id);
+  } catch {
+    userMember = { status: "left" };
+  }
+  if (!["creator", "administrator"].includes(userMember.status)) {
+    log.warn("kanal ulash rad etildi: foydalanuvchi admin emas", { userId: user.id, kanalId: chat.id });
+    return say("kanalSizAdminEmas", { title });
+  }
+
+  kanallar.ula(user.id, chat);
+  log.info("kanal ulandi", { userId: user.id, kanalId: chat.id, usul: quiet ? "forward" : "buyruq" });
+  return say("kanalUlandi", { title });
+}
+
 async function handleCallbackQuery(query) {
   const data = query.data ?? "";
   const chatId = query.message?.chat?.id;
@@ -766,6 +856,7 @@ async function start() {
     log.error("Telegram API bilan bog'lanib bo'lmadi — token to'g'rimi?", { error: error.message });
     process.exit(1);
   });
+  botId = me.id;
 
   server = app.listen(config.port, () => {
     log.info("bot ishga tushdi", {

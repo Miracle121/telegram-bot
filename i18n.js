@@ -52,6 +52,7 @@ const LOCALES = {
         "raqobatchilar. Manbani havola bilan ko'rsataman.\n\n") +
       "/post [mavzu] — mavzu bo'yicha post yozib beraman. Botni kanalingizga admin " +
       "qilib qo'shsangiz, post tagida «Kanalga chop etish» tugmasi chiqadi\n" +
+      "/kanal — post chiqadigan kanalni ulash\n" +
       "/new — suhbatni noldan boshlash\n" +
       "/lang — tilni o'zgartirish\n" +
       "/start — tanishtiruv xabari\n" +
@@ -110,7 +111,8 @@ const LOCALES = {
       "📢 <b>Kanal hali ulanmagan.</b> Ulash uchun:\n" +
       "1. Kanal sozlamalari → <b>Administratorlar</b> → <b>Admin qo'shish</b>\n" +
       "2. Shu botni tanlang va <b>«Post joylash»</b> huquqini yoqing\n" +
-      "3. «✅ kanal ulandi» xabarini kuting\n\n" +
+      "3. Bot allaqachon admin bo'lsa — kanaldan istalgan postni menga <b>forward</b> qiling " +
+      "yoki <code>/kanal @kanal_nomi</code> yozing\n\n" +
       "Keyin shu post tagidagi «Kanalga chop etish» tugmasini qayta bosing.",
     postRewriteStart: "🔄 Qayta yozilmoqda ({round}/{max})…",
     postRewriteLimit: "Bu post {max} marta qayta yozildi. Boshqacha natija kerak bo'lsa, yangi /post bilan boshlang.",
@@ -122,6 +124,20 @@ const LOCALES = {
       "Shu huquqni bering — kanal o'zi ulanadi.",
     kanalUzildi: "Bot <b>{title}</b> kanalidan chiqarildi — kanal uzildi.",
     kanalRuxsatYoq: "Bu botda kanal ulash faqat bot egasi uchun yoqilgan.",
+    kanalUsage:
+      "📢 <b>Kanalni ulash</b>\n\n" +
+      "Botni kanalingizga «Post joylash» huquqi bilan admin qiling, keyin ikki yo'ldan biri:\n" +
+      "• kanaldan istalgan postni menga <b>forward</b> qiling (yopiq kanal uchun ham ishlaydi)\n" +
+      "• yoki yozing: <code>/kanal @kanal_nomi</code>",
+    kanalHolati:
+      "📢 Ulangan kanal: <b>{title}</b>\n" +
+      "Boshqasini ulash: <code>/kanal @kanal_nomi</code> yoki undan post forward qiling.",
+    kanalTopilmadi:
+      "Bunday kanal topilmadi. Nomini tekshiring (<code>/kanal @kanal_nomi</code>) " +
+      "yoki kanaldan postni forward qiling.",
+    kanalEmas: "Bu kanal emas. Faqat kanalni ulash mumkin.",
+    kanalBotAdminEmas: "Bot <b>{title}</b> kanalida admin emas. Avval botni «Post joylash» huquqi bilan admin qiling.",
+    kanalSizAdminEmas: "Siz <b>{title}</b> kanalining admini emassiz — faqat kanal admini uni ulay oladi.",
   },
   ru: {
     chooseLanguage: "Выберите язык:",
@@ -145,6 +161,7 @@ const LOCALES = {
         "Источник указываю ссылкой.\n\n") +
       "/post [тема] — напишу пост по теме. Добавьте бота админом в свой канал — " +
       "под постом появится кнопка «Опубликовать в канал»\n" +
+      "/kanal — подключить канал для публикации\n" +
       "/new — начать разговор заново\n" +
       "/lang — сменить язык\n" +
       "/start — приветственное сообщение\n" +
@@ -203,7 +220,8 @@ const LOCALES = {
       "📢 <b>Канал ещё не подключён.</b> Чтобы подключить:\n" +
       "1. Настройки канала → <b>Администраторы</b> → <b>Добавить администратора</b>\n" +
       "2. Выберите этого бота и включите право <b>«Публикация сообщений»</b>\n" +
-      "3. Дождитесь сообщения «✅ канал подключён»\n\n" +
+      "3. Если бот уже админ — <b>перешлите</b> мне любой пост из канала " +
+      "или напишите <code>/kanal @имя_канала</code>\n\n" +
       "Затем снова нажмите «Опубликовать в канал» под этим постом.",
     postRewriteStart: "🔄 Переписываю ({round}/{max})…",
     postRewriteLimit: "Этот пост переписан {max} раза. Нужен другой результат — начните новый /post.",
@@ -215,6 +233,20 @@ const LOCALES = {
       "Дайте это право — канал подключится сам.",
     kanalUzildi: "Бот удалён из канала <b>{title}</b> — канал отключён.",
     kanalRuxsatYoq: "В этом боте подключать канал может только владелец.",
+    kanalUsage:
+      "📢 <b>Подключение канала</b>\n\n" +
+      "Сделайте бота админом канала с правом «Публикация сообщений», затем одно из двух:\n" +
+      "• <b>перешлите</b> мне любой пост из канала (работает и для закрытых)\n" +
+      "• или напишите: <code>/kanal @имя_канала</code>",
+    kanalHolati:
+      "📢 Подключён канал: <b>{title}</b>\n" +
+      "Подключить другой: <code>/kanal @имя_канала</code> или перешлите из него пост.",
+    kanalTopilmadi:
+      "Канал не найден. Проверьте имя (<code>/kanal @имя_канала</code>) " +
+      "или перешлите пост из канала.",
+    kanalEmas: "Это не канал. Подключить можно только канал.",
+    kanalBotAdminEmas: "Бот не админ канала <b>{title}</b>. Сначала сделайте бота админом с правом «Публикация сообщений».",
+    kanalSizAdminEmas: "Вы не админ канала <b>{title}</b> — подключить его может только админ.",
   },
   en: {
     chooseLanguage: "Choose your language:",
@@ -238,6 +270,7 @@ const LOCALES = {
         "I'll link the source.\n\n") +
       "/post [topic] — I'll write a post on a topic. Add the bot to your channel as an " +
       "admin and a «Publish to channel» button appears under the post\n" +
+      "/kanal — connect the channel to publish to\n" +
       "/new — start a fresh conversation\n" +
       "/lang — change language\n" +
       "/start — the intro message\n" +
@@ -296,7 +329,8 @@ const LOCALES = {
       "📢 <b>No channel connected yet.</b> To connect one:\n" +
       "1. Channel settings → <b>Administrators</b> → <b>Add Admin</b>\n" +
       "2. Pick this bot and turn on <b>«Post Messages»</b>\n" +
-      "3. Wait for the «✅ channel connected» message\n\n" +
+      "3. If the bot is already an admin — <b>forward</b> me any post from the channel " +
+      "or send <code>/kanal @channel_name</code>\n\n" +
       "Then press «Publish to channel» under this post again.",
     postRewriteStart: "🔄 Rewriting ({round}/{max})…",
     postRewriteLimit: "This post was rewritten {max} times. For something different, start a new /post.",
@@ -308,6 +342,20 @@ const LOCALES = {
       "Grant that right and the channel connects by itself.",
     kanalUzildi: "The bot was removed from <b>{title}</b> — the channel is disconnected.",
     kanalRuxsatYoq: "In this bot only the owner can connect a channel.",
+    kanalUsage:
+      "📢 <b>Connecting a channel</b>\n\n" +
+      "Make the bot an admin of your channel allowed to post messages, then either:\n" +
+      "• <b>forward</b> me any post from the channel (works for private channels too)\n" +
+      "• or send: <code>/kanal @channel_name</code>",
+    kanalHolati:
+      "📢 Connected channel: <b>{title}</b>\n" +
+      "To connect another: <code>/kanal @channel_name</code> or forward a post from it.",
+    kanalTopilmadi:
+      "Channel not found. Check the name (<code>/kanal @channel_name</code>) " +
+      "or forward a post from the channel.",
+    kanalEmas: "That's not a channel. Only channels can be connected.",
+    kanalBotAdminEmas: "The bot isn't an admin of <b>{title}</b>. First make it an admin allowed to post messages.",
+    kanalSizAdminEmas: "You aren't an admin of <b>{title}</b> — only a channel admin can connect it.",
   },
 };
 

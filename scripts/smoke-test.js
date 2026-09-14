@@ -48,6 +48,10 @@ let nextMessageId = 1000;
 // Shu chatga yuborilgan hamma narsa 400 bilan qaytadi — "bot kanalda admin emas" holati.
 let failChatId = null;
 
+// getChat va getChatMember javoblari: kalit — "@nomi" yoki ID; a'zolik — "chatId:userId".
+const fakeChats = {};
+const fakeMembers = {};
+
 const api = http.createServer((req, res) => {
   // Bayt sifatida yig'amiz: sendPhoto multipart yuboradi, uni satrga aylantirsak buziladi.
   const chunks = [];
@@ -73,8 +77,18 @@ const api = http.createServer((req, res) => {
       return;
     }
 
+    // Kanalni qo'lda ulash: bot getChat va getChatMember bilan tekshiradi.
+    if (method === "getChat" && !fakeChats[payload.chat_id]) {
+      sent.push({ method, payload, failed: true });
+      res.writeHead(400, { "Content-Type": "application/json" });
+      res.end(JSON.stringify({ ok: false, error_code: 400, description: "Bad Request: chat not found" }));
+      return;
+    }
+
     const messageId = nextMessageId++;
     const results = {
+      getChat: fakeChats[payload.chat_id],
+      getChatMember: fakeMembers[`${payload.chat_id}:${payload.user_id}`] ?? { status: "left" },
       getMe: { id: 1, is_bot: true, username: "smoke_test_bot" },
       sendMessage: { message_id: messageId },
       sendPhoto: { message_id: messageId, photo: [{ file_id: "kichik_id" }, { file_id: "soxta_file_id" }] },
@@ -929,6 +943,86 @@ const simpleQueue = (text) => [
   await post(press(792, `post:re:${id}`, messageId));
   await waitFor(() => keyboardMessage()?.payload.text.includes("Kanalsiz ikkinchi"));
   check("kanalsiz qayta yozish ishladi", Boolean(keyboardMessage()));
+}
+
+// --- Allaqachon admin bo'lgan kanalni qo'lda ulash: /kanal va forward ---
+// my_chat_member faqat holat o'zgarganda keladi; bot oldin qo'shilgan bo'lsa u kelmaydi.
+{
+  const ESKI = { id: -1002000000001, type: "channel", title: "Eski kanal", username: "eski_kanal" };
+  fakeChats["@eski_kanal"] = ESKI;
+  fakeChats[ESKI.id] = ESKI;
+  fakeChats["@guruh"] = { id: -100777, type: "supergroup", title: "Guruh" };
+
+  const forwarded = (updateId, chat, text) => ({
+    update_id: updateId,
+    message: {
+      message_id: updateId,
+      from: { id: 555, first_name: "Ali", language_code: "uz" },
+      chat: { id: 555, type: "private" },
+      text,
+      forward_origin: { type: "channel", chat, message_id: 5, date: 0 },
+    },
+  });
+
+  sent.length = 0;
+  await post(message(760, "/kanal"));
+  check("/kanal yo'riqnoma berdi", lastText().includes("Connecting a channel") && lastText().includes("forward"));
+
+  sent.length = 0;
+  await post(message(761, "/kanal @yoq_kanal"));
+  check("/kanal: yo'q kanal", lastText().includes("Channel not found"));
+
+  sent.length = 0;
+  await post(message(762, "/kanal guruh"));
+  check("/kanal: @ siz nom ham qabul qilindi, guruh rad etildi", lastText().includes("not a channel"));
+
+  sent.length = 0;
+  await post(message(763, "/kanal @eski_kanal"));
+  check("/kanal: bot admin bo'lmasa aytildi", lastText().includes("isn't an admin"));
+
+  // Bot admin, lekin so'rayotgan odam kanal a'zosi xolos — begona odam ulay olmasin
+  fakeMembers[`${ESKI.id}:1`] = { status: "administrator", can_post_messages: true };
+  fakeMembers[`${ESKI.id}:555`] = { status: "member" };
+  sent.length = 0;
+  await post(message(764, "/kanal @eski_kanal"));
+  check("/kanal: kanal admini bo'lmagan odam ulay olmadi", lastText().includes("You aren't an admin"));
+  check("/kanal: begonaga kanal yozilmadi", !kanallarFile()["555"]);
+
+  // Bot admin, lekin post joylash huquqisiz
+  fakeMembers[`${ESKI.id}:1`] = { status: "administrator", can_post_messages: false };
+  fakeMembers[`${ESKI.id}:555`] = { status: "creator" };
+  sent.length = 0;
+  await post(message(765, "/kanal @eski_kanal"));
+  check("/kanal: huquqsiz bot aytildi", lastText().includes("isn't allowed to post"));
+
+  fakeMembers[`${ESKI.id}:1`] = { status: "administrator", can_post_messages: true };
+  sent.length = 0;
+  await post(message(766, "/kanal @eski_kanal"));
+  check("/kanal: kanal ulandi", lastText().includes("connected") && kanallarFile()["555"]?.id === ESKI.id);
+
+  sent.length = 0;
+  await post(message(767, "/kanal"));
+  check("/kanal: ulangan kanal ko'rsatildi", lastText().includes("Connected channel: <b>Eski kanal</b>"));
+
+  // Ulangan kanaldan forward — oddiy xabar, AI javob beradi
+  await postAi(forwarded(768, ESKI, "shu postni tahlil qil"));
+  check("ulangan kanaldan forward AI'ga ketdi", lastText().includes("Bugungi reja tayyor"));
+
+  // Bot admin bo'lmagan kanaldan forward — jim, AI'ga ketadi
+  const BEGONA = { id: -1003000000001, type: "channel", title: "Begona" };
+  fakeChats[BEGONA.id] = BEGONA;
+  await postAi(forwarded(769, BEGONA, "boshqa kanal posti"));
+  check("begona kanaldan forward jim o'tdi", lastText().includes("Bugungi reja tayyor") && !allText().includes("isn't an admin"));
+
+  // Forward bilan ulash: kanalni uzib, qayta forward qilamiz
+  await post(memberUpdate(770, ESKI, "left"));
+  check("uzilgach kanal o'chdi", !kanallarFile()["555"]);
+  sent.length = 0;
+  await post(forwarded(771, ESKI, "istalgan post"));
+  check("forward bilan kanal ulandi", lastText().includes("connected") && kanallarFile()["555"]?.id === ESKI.id);
+
+  // Keyingi sinovlar kanalsiz holatdan boshlanadi
+  await post(memberUpdate(772, ESKI, "left"));
 }
 
 // --- Guruh — e'tiborsiz ---
